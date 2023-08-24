@@ -216,12 +216,16 @@ class MFLIDAQ(DAC):
     def __init__(self,
                  api_session: zhinst_core.ziDAQServer,
                  device_props: Dict,
+                 name: str = 'Lockin',
                  reset: bool = False,
                  timeout: float = 20) -> None:
         """
         :param reset:             Reset device before initialization
         :param timeout:           Timeout in seconds for uploading
         """
+        
+        self.name = name
+        
         self.api_session = api_session
         self.device_props = device_props
         self.default_timeout = timeout

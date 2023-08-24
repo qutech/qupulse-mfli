@@ -1,6 +1,6 @@
 """ This file contains a qupulse driver for the DAQ module of an Zuerich Instruments MFLI.
 
-May lines of code have been adapted from the zihdawg driver.
+Many lines of code have been adapted from the zihdawg driver.
 
 """
 import dataclasses

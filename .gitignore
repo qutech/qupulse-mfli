@@ -15,3 +15,4 @@ MATLAB/+qc/personalPaths.mat
 .mypy_cache/*
 tests/hardware/WX2184C.exe
 .vscode/*
+.ipynb_checkpoints/

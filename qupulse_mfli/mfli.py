@@ -165,11 +165,15 @@ class MFLIProgram:
             new_program.default_channels = other.default_channels
         elif isinstance(new_program.default_channels, set):
             new_program.default_channels = new_program.default_channels.union(other.default_channels)
-
-        new_program.channel_mapping = {**self.channel_mapping}
-        if other.channel_mapping is not None:
-            for k, v in other.channel_mapping.items():
-                new_program.channel_mapping[k].update(v)
+            
+        if self.channel_mapping is not None:
+            new_program.channel_mapping = {**self.channel_mapping}
+            if other.channel_mapping is not None:
+                for k, v in other.channel_mapping.items():
+                    new_program.channel_mapping[k].update(v)
+        else:
+            new_program.channel_mapping = {**other.channel_mapping}
+        
 
         if self.windows is not None or other.windows is not None:
             new_program.windows = {}

@@ -76,6 +76,12 @@ def postprocessing_crop_windows(
     shot_index = 0  # TODO make this more flexible to not lose things
 
     for window_name, (begins, lengths) in program.windows.items():
+
+        # sort the windows by their starting timestamps
+        order = np.argsort(begins)
+        begins = begins[order]
+        lengths = lengths[order]
+
         data_by_channel = {}
         # _wind = program["windows"][window_name]
         for ci, _cn in enumerate(program.channel_mapping[window_name]):
@@ -97,7 +103,6 @@ def postprocessing_crop_windows(
                     continue
 
             extracted_data = []
-            order = np.argsort(begins)
             for b, l in zip(begins, lengths):
                 # _time_of_first_not_nan_value = applicable_data.where(~np.isnan(applicable_data), drop=True)["time"][:, 0].values
 
@@ -117,7 +122,7 @@ def postprocessing_crop_windows(
                 else:
                     extracted_data.append(np.nanmean(foo))
 
-            data_by_channel.update({cn: np.array(extracted_data)[order]})
+            data_by_channel.update({cn: extracted_data})
         masked_data[window_name] = data_by_channel
 
     return masked_data

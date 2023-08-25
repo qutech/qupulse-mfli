@@ -97,6 +97,7 @@ def postprocessing_crop_windows(
                     continue
 
             extracted_data = []
+            order = np.argsort(begins)
             for b, l in zip(begins, lengths):
                 # _time_of_first_not_nan_value = applicable_data.where(~np.isnan(applicable_data), drop=True)["time"][:, 0].values
 
@@ -116,7 +117,7 @@ def postprocessing_crop_windows(
                 else:
                     extracted_data.append(np.nanmean(foo))
 
-            data_by_channel.update({cn: extracted_data})
+            data_by_channel.update({cn: np.array(extracted_data)[order]})
         masked_data[window_name] = data_by_channel
 
     return masked_data

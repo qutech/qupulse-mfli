@@ -52,7 +52,7 @@ def postprocessing_crop_windows(
                 serial:str,
                 recorded_data: Mapping[str, List[xr.DataArray]],
                 program: "MFLIProgram",
-                fail_on_empty: bool = True, average_window:bool=False) -> Mapping[str, Mapping[str, List[Union[float, xr.DataArray]]]]:
+                fail_on_empty: bool = True, average_window:bool=False, sort_along_time:bool=True) -> Mapping[str, Mapping[str, List[Union[float, xr.DataArray]]]]:
     """ This function parses the recorded data and extracts the measurement masks
     """
 
@@ -78,9 +78,10 @@ def postprocessing_crop_windows(
     for window_name, (begins, lengths) in program.windows.items():
 
         # sort the windows by their starting timestamps
-        order = np.argsort(begins)
-        begins = begins[order]
-        lengths = lengths[order]
+        if sort_along_time:
+            order = np.argsort(begins)
+            begins = begins[order]
+            lengths = lengths[order]
 
         data_by_channel = {}
         # _wind = program["windows"][window_name]

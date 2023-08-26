@@ -1,0 +1,15 @@
+[package]
+name = "qpmfli_downsample_rust"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[lib]
+name = "qpmfli_downsample_rust"
+crate-type = ["cdylib"]
+
+[dependencies]
+ndarray = "0.15"
+rayon = "1.7.0"
+packed_simd = "0.3"
+pyo3 = { version = "0.19.0", features = ["extension-module", "numpy"] }

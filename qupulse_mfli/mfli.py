@@ -325,6 +325,7 @@ def postprocessing_crop_windows(
     for window_name, (begins, lengths) in program.windows.items():
 
         # sort the windows by their starting timestamps
+        # as of 2023-08-25 the order of the masks is not sorted correctly. And it is not clear where this scrambling happens. And the users like their windows sorted in time, and not seemingly randomly.
         if sort_along_time:
             order = np.argsort(begins)
             begins = begins[order]

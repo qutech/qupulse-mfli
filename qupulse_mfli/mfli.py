@@ -16,7 +16,13 @@ import xarray as xr
 from qupulse.hardware.dacs.dac_base import DAC
 from qupulse.utils.types import TimeType
 
-import qpmfli_downsample_rust
+from .numpy_magic import average_within_window_assuming_linear_time_reduceat
+
+try:
+    import qpmfli_downsample_rust
+    _HAS_RUST = True
+except:
+    _HAS_RUST = False
 
 try:
     # zhinst fires a DeprecationWarning from its own code in some versions...
@@ -274,7 +280,6 @@ def _extract_data(applicable_data,applicable_data_time,time_of_trigger,begins,le
     return extracted_data_jnp
 
 
-@profile
 def postprocessing_crop_windows(
                 serial:str,
                 recorded_data: Mapping[str, List[xr.DataArray]],
@@ -361,26 +366,37 @@ def postprocessing_crop_windows(
             print(applicable_data["time"])
             
             if not try_rust:
-                for b, l in zip(begins, lengths):
-                    # _time_of_first_not_nan_value = applicable_data.where(~np.isnan(applicable_data), drop=True)["time"][:, 0].values
-    
-                    _time_of_first_not_nan_value = applicable_data["time"][:, 0].values
-    
-                    time_of_trigger = -1 * applicable_data.attrs["gridcoloffset"][
-                        0] * 1e9 + _time_of_first_not_nan_value
-    
-                    foo = applicable_data.where((applicable_data["time"] >= (time_of_trigger + b)[:, None]) & (
-                            applicable_data["time"] <= (time_of_trigger + b + l)[:, None]), drop=False)
-                    if not average_window:
-                        foo = foo.copy()
-                        foo2 = foo.where(~np.isnan(foo), drop=True)
-                        rows_with_data = np.sum(~np.isnan(foo), axis=-1) > 0
-                        foo2["time"] -= time_of_trigger[rows_with_data, None]
-                        extracted_data.append(foo2)
-                    else:
-                        extracted_data.append(np.nanmean(foo))
+
+                time_axis = applicable_data["time"].values
+                dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis))
+
+                if average_window and np.allclose(np.diff(timeaxis), dt):
+                    averaged = average_within_window_assuming_linear_time_reduceat(values=applicable_data.values, timeaxis=time_axis, begins=begins, lengths=lengths, check_linearity=False)
+                    extracted_data = averaged
+                else:
+
+                    for b, l in zip(begins, lengths):
+                        # _time_of_first_not_nan_value = applicable_data.where(~np.isnan(applicable_data), drop=True)["time"][:, 0].values
+        
+                        _time_of_first_not_nan_value = applicable_data["time"][:, 0].values
+        
+                        time_of_trigger = -1 * applicable_data.attrs["gridcoloffset"][
+                            0] * 1e9 + _time_of_first_not_nan_value
+        
+                        foo = applicable_data.where((applicable_data["time"] >= (time_of_trigger + b)[:, None]) & (
+                                applicable_data["time"] <= (time_of_trigger + b + l)[:, None]), drop=False)
+                        if not average_window:
+                            foo = foo.copy()
+                            foo2 = foo.where(~np.isnan(foo), drop=True)
+                            rows_with_data = np.sum(~np.isnan(foo), axis=-1) > 0
+                            foo2["time"] -= time_of_trigger[rows_with_data, None]
+                            extracted_data.append(foo2)
+                        else:
+                            extracted_data.append(np.nanmean(foo))
                         
             else:
+                if not _HAS_RUST:
+                    raise ValueError()
                 if not average_window:
                     raise NotImplementedError()
                 

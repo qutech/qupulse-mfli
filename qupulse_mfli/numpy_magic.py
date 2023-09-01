@@ -1,6 +1,6 @@
 """ This file contains optimizes post processing functions
 """
-
+import matplotlib.pyplot as plt
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -23,14 +23,24 @@ def average_within_window_assuming_linear_time_reduceat(values:np.ndarray, timea
 
 	# from ns to bins: i_bin = np.round(t-o)/dt)
 
-	print((begins-o)/dt)
-	print((begins+lengths-o)/dt)
+	# print((begins)/dt)
+	# print((begins+lengths)/dt)
+
+	# print("TA")
+	# print(values)
+	# print(timeaxis)
+	# print(begins)
+
+	# plt.plot(timeaxis, values.flatten())
+
 
 	begin_indeces = np.round((begins-o)/dt).astype(int)
 	end_indeces = np.round((begins+lengths-o)/dt).astype(int)
 	width = end_indeces - begin_indeces
+	# print(begin_indeces, end_indeces)
+	# print(timeaxis.shape)
 
-	print(begin_indeces, end_indeces)
+	# print(begin_indeces, end_indeces)
 	end_indeces[end_indeces==values.shape[-1]] = values.shape[-1]-1
 
 	reduce_indeces = np.vstack([begin_indeces, end_indeces]).T.flatten()
@@ -40,16 +50,19 @@ def average_within_window_assuming_linear_time_reduceat(values:np.ndarray, timea
 	assert selected.shape[-1] == len(width)
 	averaged = selected/width
 
+	# plt.plot(begins+lengths/2, averaged.flatten(), marker="o")
+	# plt.show()
+
 	return averaged
 
 @jax.jit
 def average_within_window_assuming_linear_time_jitted(values:np.ndarray, timeaxis:np.ndarray, begins:np.ndarray, lengths:np.ndarray) -> np.ndarray:
 
 	dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)
-	o = timeaxis[0]
+	# o = timeaxis[0]
 
-	begin_indeces = jnp.round((begins-o)/dt).astype(int)
-	end_indeces = jnp.round((begins+lengths-o)/dt).astype(int)
+	begin_indeces = jnp.round((begins)/dt).astype(int)
+	end_indeces = jnp.round((begins+lengths)/dt).astype(int)
 	width = end_indeces - begin_indeces
 
 	mask = jnp.zeros((timeaxis.shape[0], begins.shape[0]))

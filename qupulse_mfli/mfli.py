@@ -181,17 +181,17 @@ def _jax_postprocessing_crop_windows_basic(
             if applicable_data.shape[0] != 1:
                 raise NotImplementedError
             
-            print(_time_of_first_not_nan_value.shape)
-            print(applicable_data.shape)
-            print(applicable_data["time"].shape)
-            print(begins)
-            print(jnp.array(applicable_data["time"]))
+            # print(_time_of_first_not_nan_value.shape)
+            # print(applicable_data.shape)
+            # print(applicable_data["time"].shape)
+            # print(begins)
+            # print(jnp.array(applicable_data["time"]))
             
             #keep the absolute values low to avoid float accuracy problems... (?)
             time_offset = applicable_data["time"][0,0]
             applicable_data_time = jnp.array(applicable_data["time"]-time_offset)[0,:]
-            print(time_of_trigger)
-            print(time_offset)
+            # print(time_of_trigger)
+            # print(time_offset)
             time_of_trigger = jnp.array(time_of_trigger[0]-time_offset)
             
             extracted_data_jnp_arr = _extract_data(jnp.array(applicable_data[0,:]),applicable_data_time,time_of_trigger,jnp.array(begins),jnp.array(lengths))
@@ -217,8 +217,8 @@ def _jax_postprocessing_crop_windows_basic(
             #     #     extracted_data.append(foo2)
             #     # else:
             #     extracted_data.append(np.nanmean(foo))
-            print('______JAX_ARR____________')
-            print(extracted_data_jnp_arr)
+            # print('______JAX_ARR____________')
+            # print(extracted_data_jnp_arr)
             data_by_channel.update({cn: np.asarray(extracted_data_jnp_arr)})
         masked_data[window_name] = data_by_channel
 
@@ -358,30 +358,39 @@ def postprocessing_crop_windows(
 
             extracted_data = []
             
-            ### print(_time_of_first_not_nan_value.shape)
-            print(applicable_data.shape)
-            print(applicable_data["time"].shape)
-            print(begins)
-            # print()
-            print(applicable_data["time"])
+            # ### print(_time_of_first_not_nan_value.shape)
+            # print(applicable_data.shape)
+            # print(applicable_data["time"].shape)
+            # print(begins)
+            # # print()
+            # print(applicable_data["time"])
             
-            if not try_rust:
+            if not try_rust or not _HAS_RUST:
 
-                time_axis = applicable_data["time"].values
-                dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis))
+                _time_of_first_not_nan_value = applicable_data["time"][:, 0].values
+                time_of_trigger = -1 * applicable_data.attrs["gridcoloffset"][
+                            0] * 1e9 + _time_of_first_not_nan_value
 
-                if average_window and np.allclose(np.diff(timeaxis), dt):
-                    averaged = average_within_window_assuming_linear_time_reduceat(values=applicable_data.values, timeaxis=time_axis, begins=begins, lengths=lengths, check_linearity=False)
+                assert np.product(applicable_data["time"].shape) == applicable_data["time"].shape[-1]
+                # print(applicable_data["time"])
+                timeaxis = applicable_data["time"].values.squeeze()
+                assert len(timeaxis.shape) == 1
+                dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)
+
+                # print(f"evenly spaced windows")
+                # print(np.diff(timeaxis), dt)
+                # print(f"{np.allclose(np.diff(timeaxis), dt, atol=0.05)}")
+                # print(f"{np.allclose(np.diff(timeaxis), dt, atol=0.05)=}")
+
+                if average_window and np.allclose(np.diff(timeaxis), dt, atol=0.05):
+                    averaged = average_within_window_assuming_linear_time_reduceat(values=applicable_data.values, timeaxis=timeaxis, begins=begins+time_of_trigger, lengths=lengths, check_linearity=False)
                     extracted_data = averaged
                 else:
 
                     for b, l in zip(begins, lengths):
                         # _time_of_first_not_nan_value = applicable_data.where(~np.isnan(applicable_data), drop=True)["time"][:, 0].values
-        
-                        _time_of_first_not_nan_value = applicable_data["time"][:, 0].values
-        
-                        time_of_trigger = -1 * applicable_data.attrs["gridcoloffset"][
-                            0] * 1e9 + _time_of_first_not_nan_value
+
+                        # print(b, b+l)
         
                         foo = applicable_data.where((applicable_data["time"] >= (time_of_trigger + b)[:, None]) & (
                                 applicable_data["time"] <= (time_of_trigger + b + l)[:, None]), drop=False)
@@ -426,7 +435,7 @@ def postprocessing_crop_windows(
                 extracted_data = qpmfli_downsample_rust.py_extract_data(np.asarray(applicable_data[0,:],dtype=np.float32), np.asarray(applicable_data_time,dtype=np.float32),
                                                        np.asarray(begins,dtype=np.float32), np.asarray(lengths,dtype=np.float32), time_of_trigger)
                 
-                print(extracted_data)
+                # print(extracted_data)
                 
             data_by_channel.update({cn: extracted_data})
         masked_data[window_name] = data_by_channel
@@ -464,8 +473,11 @@ class MFLIProgram:
 
     def required_channels(self) -> Set[str]:
         channels = set()
-        for window_name in self.windows:
-            channels |= self.channel_mapping.get(window_name, self.default_channels)
+        if self.channel_mapping is not None:
+            for window_name in self.windows:
+                foo = self.channel_mapping.get(window_name, self.default_channels)
+                if foo is not None:
+                    channels |= foo
         return channels
 
     def merge(self, other: 'MFLIProgram') -> 'MFLIProgram':
@@ -477,14 +489,18 @@ class MFLIProgram:
             new_program.default_channels = other.default_channels
         elif isinstance(new_program.default_channels, set):
             new_program.default_channels = new_program.default_channels.union(other.default_channels)
-            
+        
+        new_program.channel_mapping = {}
         if self.channel_mapping is not None:
-            new_program.channel_mapping = {**self.channel_mapping}
+            new_program.channel_mapping.update(self.channel_mapping)
             if other.channel_mapping is not None:
                 for k, v in other.channel_mapping.items():
-                    new_program.channel_mapping[k].update(v)
+                    if k in new_program.channel_mapping:
+                        new_program.channel_mapping[k].update(v)
+                    else:
+                        new_program.channel_mapping[k] = v
         else:
-            new_program.channel_mapping = {**other.channel_mapping}
+            new_program.channel_mapping.update(other.channel_mapping)
         
 
         if self.windows is not None or other.windows is not None:
@@ -493,10 +509,8 @@ class MFLIProgram:
             def add_to_windows(name, begins, lengths):
                 if name not in new_program.windows:
                     new_program.windows[name] = [[], []]
-                for b, l in zip(begins, lengths):
-                    if b not in new_program.windows[name][0]:
-                        new_program.windows[name][0].append(b)
-                        new_program.windows[name][1].append(l)
+                new_program.windows[name][0].extend(begins)
+                new_program.windows[name][1].extend(lengths)
 
             if self.windows is not None:
                 for wn, v in self.windows.items():
@@ -762,6 +776,8 @@ class MFLIDAQ(DAC):
     def arm_program(self, program_name: str, force: Union[bool, None] = None) -> None:
         """Prepare the device for measuring the given program and wait for a trigger event."""
 
+        # print(f"MFLI PROGRAM IS ARMED")
+
         force = force if force is not None else self.force_update_on_arm
 
         # check if program_name specified program is selected and important parameter set to the lock-in
@@ -981,6 +997,9 @@ class MFLIDAQ(DAC):
                 """
 
         program = self._armed_program
+
+        if program is None:
+            raise ValueError("The Mfli seams to not have been armed, as no program is armed.")
 
         if callable(program.operations):
             program.operations = [program.operations]

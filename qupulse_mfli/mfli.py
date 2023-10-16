@@ -653,6 +653,7 @@ class MFLIDAQ(DAC):
                      First array are the start points of measurement windows in nanoseconds.
                      Second array are the corresponding measurement window's lengths in nanoseconds.
         """
+
         self.programs.setdefault(program_name, MFLIProgram()).windows = windows
 
         # self.programs.setdefault(program_name, {}).setdefault("windows", {}).update(windows)
@@ -1166,7 +1167,6 @@ class MFLIDAQ(DAC):
 
         if not return_raw:
             if len(results) == 0:
-                raise ValueError()
                 return None
             return results
 

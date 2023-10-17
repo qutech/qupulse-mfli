@@ -41,7 +41,9 @@ def average_within_window_assuming_linear_time_reduceat(values:np.ndarray, timea
 	# print(timeaxis.shape)
 
 	# print(begin_indeces, end_indeces)
-	end_indeces[end_indeces<=0] = 0
+	begin_indeces[begin_indeces<0] = 0
+	begin_indeces[begin_indeces>=values.shape[-1]] = values.shape[-1]-1
+	end_indeces[end_indeces<0] = 0
 	end_indeces[end_indeces>=values.shape[-1]] = values.shape[-1]-1
 
 	reduce_indeces = np.vstack([begin_indeces, end_indeces]).T.flatten()
@@ -53,6 +55,9 @@ def average_within_window_assuming_linear_time_reduceat(values:np.ndarray, timea
 
 	# plt.plot(begins+lengths/2, averaged.flatten(), marker="o")
 	# plt.show()
+
+	averaged[np.isinf(averaged)] = np.nan
+	averaged[width==0] = np.nan
 
 	return averaged
 

@@ -57,7 +57,7 @@ def average_within_window_assuming_linear_time_reduceat(values:np.ndarray, timea
 	# plt.show()
 
 	averaged[np.isinf(averaged)] = np.nan
-	averaged[width==0] = np.nan
+	# averaged[np.equal(width, 0.0)] = np.nan
 
 	return averaged
 

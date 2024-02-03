@@ -40,10 +40,15 @@ def average_within_window_assuming_linear_time_reduceat(values:np.ndarray, timea
 	# print(timeaxis.shape)
 
 	# print(begin_indeces, end_indeces)
-	begin_indeces[begin_indeces<0] = 0
-	begin_indeces[begin_indeces>=values.shape[-1]] = values.shape[-1]-1
-	end_indeces[end_indeces<0] = 0
-	end_indeces[end_indeces>=values.shape[-1]] = values.shape[-1]-1
+	begin_index_below, end_index_below = (begin_indeces<0), (end_indeces<0)
+	begin_above_below, end_above_below = (begin_indeces>=values.shape[-1]), (end_indeces>=values.shape[-1])
+	out_of_range = begin_index_below|end_index_below|begin_above_below|end_above_below
+
+	begin_indeces[begin_index_below] = 0
+	begin_indeces[begin_above_below] = values.shape[-1]-1
+	
+	end_indeces[end_index_below] = 0
+	end_indeces[end_above_below] = values.shape[-1]-1
 
 	width = end_indeces - begin_indeces
 
@@ -52,13 +57,13 @@ def average_within_window_assuming_linear_time_reduceat(values:np.ndarray, timea
 	all_summed = np.add.reduceat(values, reduce_indeces, axis=-1)
 	selected = all_summed[..., ::2]
 	assert selected.shape[-1] == len(width)
-	averaged = selected/width
+	averaged = selected/np.maximum(1, width)
 
 	# plt.plot(begins+lengths/2, averaged.flatten(), marker="o")
 	# plt.show()
 
 	# averaged[np.isinf(averaged)] = np.nan # this should not be necessary, as the inf through 1/width is taken care of by the next line. if infs are now within the returned data, than it should be due to infs in the raw data.
-	averaged[:, width == 0] = np.nan
+	averaged[:, out_of_range&(width<=0)] = np.nan
 
 	return averaged
 

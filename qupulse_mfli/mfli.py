@@ -19,12 +19,6 @@ from qupulse.utils.types import TimeType
 from .numpy_magic import average_within_window_assuming_linear_time_reduceat
 
 try:
-    import qpmfli_downsample_rust
-    _HAS_RUST = True
-except:
-    _HAS_RUST = False
-
-try:
     # zhinst fires a DeprecationWarning from its own code in some versions...
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', DeprecationWarning)
@@ -38,14 +32,6 @@ try:
 except ImportError:
     # backward compability
     from zhinst import ziPython as zhinst_core
-
-
-try:
-    import jax.numpy as jnp
-    from jax import jit, vmap, pmap
-    _HAX_JAX = True
-except ImportError:
-    _HAS_JAX = False
 
 logger = logging.getLogger(__name__)
 
@@ -62,252 +48,15 @@ class TriggerSettings:
     def is_endless(self):
         return np.isinf(self.measurement_count) or self.measurement_count == 0
 
-
-#profile this
-import cProfile, pstats, io
-def profile(fnc):
-    """A decorator that uses cProfile to profile a function"""
-    def inner(*args, **kwargs):
-        
-        pr = cProfile.Profile()
-        pr.enable()
-        retval = fnc(*args, **kwargs)
-        pr.disable()
-        s = io.StringIO()
-        sortby = 'cumulative'
-        
-        # with open('D:/2302_experiment_env/CSP_profile.txt', 'w') as s:
-        ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-        ps.print_stats()
-        # print(s.getvalue())
-        #TODO: adjust files
-        with open('M:/2308_experiment_env/MFLI_AVERAGE_WINDOWS_PROFILE.txt', 'w+') as f:
-            f.write(s.getvalue())
-        return retval
-
-    return inner
-
-
-# import math
-# def convertToNumber (s):
-#     return int.from_bytes(s.encode(), 'little')
-
-# def convertFromNumber (n):
-#     return n.to_bytes(math.ceil(n.bit_length() / 8), 'little').decode()
-
-#inner jax functions:
-# @jit
-# _extract_relevant_arrays
-
-# @jit
-def _jax_postprocessing_crop_windows(
-        serial:str,
-        recorded_data: Mapping[str, List[xr.DataArray]],
-        program: "MFLIProgram",
-        # fail_on_empty: bool = True, average_window:bool=False, sort_along_time:bool=True
-        ) -> Mapping[str, Mapping[str, List[Union[float, xr.DataArray]]]]:
-        
-        shot_index = 0
-        
-        window_names = tuple(program.windows.keys())
-        #unsorted, shape (windows_names,2,begin/lengths length)
-        begins_lengths_arr = jnp.array(tuple(program.windows.values()))
-        recorded_data_keys_tuple_tuple = tuple([tuple([f"/{serial}/{_cn}".lower() for _cn in program.channel_mapping[window_name]]) for window_name in window_names])
-        # applicable_data_arr = jnp.array([recorded_data[cn][-1 - shot_index] for cn in 
-        
-        r_keys = set([element for tupl in recorded_data_keys_tuple_tuple for element in tupl])
-        recorded_data_jnp_dict = {k:jnp.array(recorded_data[k][-1 - shot_index]) for k in r_keys}
-        recorded_data_time_jnp_dict = {k:jnp.array(recorded_data[k][-1 - shot_index]) for k in r_keys}
-                                         
-        # window_
-        
-        # for window_name, (begins, lengths) in program.windows.items():
-        #     order = np.argsort(begins)
-        #     begins = begins[order]
-        #     lengths = lengths[order]
-        #     for ci, _cn in enumerate(program.channel_mapping[window_name]):
-        # pass
-
-
-def _jax_postprocessing_crop_windows_basic(
-                serial:str,
-                recorded_data: Mapping[str, List[xr.DataArray]],
-                program: "MFLIProgram",
-                fail_on_empty: bool = True,
-                # average_window: bool=False,
-                # sort_along_time: bool=True,
-                ) -> Mapping[str, Mapping[str, List[Union[float, xr.DataArray]]]]:
-
-    masked_data = {}
-
-    shot_index = 0  # TODO make this more flexible to not lose things
-
-    for window_name, (begins, lengths) in program.windows.items():
-
-        # sort the windows by their starting timestamps
-        # if sort_along_time:
-        order = np.argsort(begins)
-        begins = begins[order]
-        lengths = lengths[order]
-
-        data_by_channel = {}
-        # _wind = program["windows"][window_name]
-        for ci, _cn in enumerate(program.channel_mapping[window_name]):
-            cn = f"/{serial}/{_cn}".lower()
-
-            if len(recorded_data[cn]) <= shot_index:
-                # then we do not have data for this shot_index, which is intended to cover multiple not yet collected measurements. And thus will not have anything to save.
-                warnings.warn(
-                    f"for channel '{cn}' only {len(recorded_data[cn])} shots are given. This does not allow for taking element [-1-{shot_index}]")
-                continue
-            applicable_data = recorded_data[cn][-1 - shot_index]
-            applicable_data = applicable_data.where(~np.isnan(applicable_data), drop=True)
-
-            if len(applicable_data) == 0 or np.product([*applicable_data.shape]) == 0:
-                if fail_on_empty:
-                    raise ValueError(f"The received data for channel {_cn} is empty.")
-                else:
-                    warnings.warn(f"The received data for channel {_cn} is empty.")
-                    continue
-
-            extracted_data = []
-            
-            _time_of_first_not_nan_value = applicable_data["time"][:, 0].values
-            time_of_trigger = -1 * applicable_data.attrs["gridcoloffset"][0] * 1e9 + _time_of_first_not_nan_value
-            
-            if _time_of_first_not_nan_value.shape != (1,):
-                raise NotImplementedError
-            
-            if applicable_data.shape[0] != 1:
-                raise NotImplementedError
-            
-            # print(_time_of_first_not_nan_value.shape)
-            # print(applicable_data.shape)
-            # print(applicable_data["time"].shape)
-            # print(begins)
-            # print(jnp.array(applicable_data["time"]))
-            
-            #keep the absolute values low to avoid float accuracy problems... (?)
-            time_offset = applicable_data["time"][0,0]
-            applicable_data_time = jnp.array(applicable_data["time"]-time_offset)[0,:]
-            # print(time_of_trigger)
-            # print(time_offset)
-            time_of_trigger = jnp.array(time_of_trigger[0]-time_offset)
-            
-            extracted_data_jnp_arr = _extract_data(jnp.array(applicable_data[0,:]),applicable_data_time,time_of_trigger,jnp.array(begins),jnp.array(lengths))
-            
-            
-            
-            # for b, l in zip(begins, lengths):
-                # _time_of_first_not_nan_value = applicable_data.where(~np.isnan(applicable_data), drop=True)["time"][:, 0].values
-
-                
-                
-                
-                
-            #     # _extract_data
-                
-            #     foo = applicable_data.where((applicable_data["time"] >= (time_of_trigger + b)[:, None]) & (
-            #             applicable_data["time"] <= (time_of_trigger + b + l)[:, None]), drop=False)
-            #     # if not average_window:
-            #     #     foo = foo.copy()
-            #     #     foo2 = foo.where(~np.isnan(foo), drop=True)
-            #     #     rows_with_data = np.sum(~np.isnan(foo), axis=-1) > 0
-            #     #     foo2["time"] -= time_of_trigger[rows_with_data, None]
-            #     #     extracted_data.append(foo2)
-            #     # else:
-            #     extracted_data.append(np.nanmean(foo))
-            # print('______JAX_ARR____________')
-            # print(extracted_data_jnp_arr)
-            data_by_channel.update({cn: np.asarray(extracted_data_jnp_arr)})
-        masked_data[window_name] = data_by_channel
-
-    return masked_data
-
-@jit
-def _extract_data_single(applicable_data,applicable_data_time,time_of_trigger,b,l):
-    # foo_applicable_data = jnp.where((applicable_data_time >= (time_of_trigger + b)[:, None]) & (
-    #                                  applicable_data_time <= (time_of_trigger + b + l)[:, None]),
-    #                                  applicable_data,
-    #                                  float('nan'),
-    #                                  )
-    
-    # foo_applicable_data = jnp.where((applicable_data_time >= (time_of_trigger + b)[:, None]) & (
-    #                                  applicable_data_time <= (time_of_trigger + b + l)[:, None]),
-    #                                  applicable_data,
-    #                                  float('nan'),
-    #                                  )
-    
-    # foo_applicable_data_time = jnp.where((applicable_data_time >= (time_of_trigger + b)[:, None]) & (
-    #                                  applicable_data_time <= (time_of_trigger + b + l)[:, None]),
-    #                                  applicable_data_time,
-    #                                  float('NaN'))
-    
-    
-    # applicable_data.where((applicable_data["time"] >= (time_of_trigger + b)[:, None]) & (
-    #         applicable_data["time"] <= (time_of_trigger + b + l)[:, None]), drop=False)
-    
-    # return jnp.nanmean(foo_applicable_data)
-    
-    # return jnp.nanmean(applicable_data,where=(applicable_data_time >= (time_of_trigger + b)[:, None]) & (
-    #                                   applicable_data_time <= (time_of_trigger + b + l)[:, None]))
-    return jnp.nanmean(applicable_data,where=(applicable_data_time >= (time_of_trigger + b)) & (
-                                  applicable_data_time <= (time_of_trigger + b + l)))
-@jit
-def _extract_data(applicable_data,applicable_data_time,time_of_trigger,begins,lengths):
-    
-    # applicable_data_time
-    extracted_data_jnp = jnp.nanmean(applicable_data[jnp.newaxis,:],where=(applicable_data_time[jnp.newaxis,:] >= (time_of_trigger + begins)[:,jnp.newaxis]) & (
-                                     applicable_data_time[jnp.newaxis,:] <= (time_of_trigger + begins + lengths)[:,jnp.newaxis]),
-                                     axis=-1,
-                                     )
-    
-    # #barebone
-    # #but breaks kernel often, and costly recompile
-    # extracted_data_jnp = jnp.empty(len(begins))
-    # for i, (b, l) in enumerate(zip(begins,lengths)):
-    #     extracted_data_jnp = extracted_data_jnp.at[i].set(_extract_data_single(applicable_data,applicable_data_time,time_of_trigger,b,l))
-    
-    #crams up RAM fast
-    # extracted_data_jnp = vmap(_extract_data_single,in_axes=(None,None,None,0,0))(applicable_data,applicable_data_time,time_of_trigger,begins,lengths)
-    
-    #only works if sufficient devices available
-    # extracted_data_jnp = pmap(_extract_data_single,in_axes=(None,None,None,0,0))(applicable_data,applicable_data_time,time_of_trigger,begins,lengths)
-
-    # extracted_data_jnp = jnp.nanmean(applicable_data,where=(applicable_data_time >= (time_of_trigger + b)[:, None]) & (
-    #                                   applicable_data_time <= (time_of_trigger + b + l)[:, None]))
-    
-    return extracted_data_jnp
-
-
 def postprocessing_crop_windows(
                 serial:str,
                 recorded_data: Mapping[str, List[xr.DataArray]],
                 program: "MFLIProgram",
                 fail_on_empty: bool = True, average_window:bool=False, sort_along_time:bool=True,
-                try_jax: bool = False, #DOES NOT REALLY IMPROVE PERFORMANCE AS HOPED
-                try_rust: bool = True,
                 ) -> Mapping[str, Mapping[str, List[Union[float, xr.DataArray]]]]:
     """ This function parses the recorded data and extracts the measurement masks
     """
     
-    if try_jax:
-        # if _HAS_JAX:
-        # try:
-            if fail_on_empty:
-                raise NotImplementedError()
-            if not sort_along_time:
-                raise NotImplementedError()
-            if not average_window:
-                raise NotImplementedError()
-                #TODO: 'shot index' always 0 assumed. don't need other right now... also not implemented in fallback currently, if interpreted correctly.
-            # return _jax_postprocessing_crop_windows(serial,recorded_data,program)
-            return _jax_postprocessing_crop_windows_basic(serial,recorded_data,program,fail_on_empty=fail_on_empty)
-
-        # except:
-        # else:
-            # raise RuntimeError()
-            # print('jax not detected. fallback to normal implementation')
     # the first dimension of channel_data is expected to be the history of multiple not read data points. This will
     # be handled as multiple entries in a list. This will then not make too much sense, if not every channel as this
     # many entries. If this is the case, they will be stacked, such that for the last elements it fits.
@@ -322,7 +71,7 @@ def postprocessing_crop_windows(
     masked_data = {}
 
     # the MFLI returns a list of measurements. We only proceed with the last ones from this list. One might want to
-    # iterate over that and process all of them.This feature might be useful if after some measurements no read()
+    # iterate over that and process all of them. This feature might be useful if after some measurements no read()
     # operation is called. Then with the later read, the data is returned.
     # TODO this might be more elegantly implemented or handled using yields!
     shot_index = 0  # TODO make this more flexible to not lose things
@@ -365,77 +114,41 @@ def postprocessing_crop_windows(
             # # print()
             # print(applicable_data["time"])
             
-            if not try_rust or not _HAS_RUST:
+            _time_of_first_not_nan_value = applicable_data["time"][:, 0].values
+            time_of_trigger = -1 * applicable_data.attrs["gridcoloffset"][
+                        0] * 1e9 + _time_of_first_not_nan_value
 
-                _time_of_first_not_nan_value = applicable_data["time"][:, 0].values
-                time_of_trigger = -1 * applicable_data.attrs["gridcoloffset"][
-                            0] * 1e9 + _time_of_first_not_nan_value
+            assert np.product(applicable_data["time"].shape) == applicable_data["time"].shape[-1]
+            # print(applicable_data["time"])
+            timeaxis = applicable_data["time"].values.squeeze()
+            assert len(timeaxis.shape) == 1
+            dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)
 
-                assert np.product(applicable_data["time"].shape) == applicable_data["time"].shape[-1]
-                # print(applicable_data["time"])
-                timeaxis = applicable_data["time"].values.squeeze()
-                assert len(timeaxis.shape) == 1
-                dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)
+            # print(f"evenly spaced windows")
+            # print(np.diff(timeaxis), dt)
+            # print(f"{np.allclose(np.diff(timeaxis), dt, atol=0.05)}")
+            # print(f"{np.allclose(np.diff(timeaxis), dt, atol=0.05)=}")
 
-                # print(f"evenly spaced windows")
-                # print(np.diff(timeaxis), dt)
-                # print(f"{np.allclose(np.diff(timeaxis), dt, atol=0.05)}")
-                # print(f"{np.allclose(np.diff(timeaxis), dt, atol=0.05)=}")
-
-                if average_window and np.allclose(np.diff(timeaxis), dt, atol=0.05):
-                    averaged = average_within_window_assuming_linear_time_reduceat(values=applicable_data.values, timeaxis=timeaxis, begins=begins+time_of_trigger, lengths=lengths, check_linearity=False)
-                    extracted_data = averaged
-                else:
-
-                    for b, l in zip(begins, lengths):
-                        # _time_of_first_not_nan_value = applicable_data.where(~np.isnan(applicable_data), drop=True)["time"][:, 0].values
-
-                        # print(b, b+l)
-        
-                        foo = applicable_data.where((applicable_data["time"] >= (time_of_trigger + b)[:, None]) & (
-                                applicable_data["time"] <= (time_of_trigger + b + l)[:, None]), drop=False)
-                        if not average_window:
-                            foo = foo.copy()
-                            foo2 = foo.where(~np.isnan(foo), drop=True)
-                            rows_with_data = np.sum(~np.isnan(foo), axis=-1) > 0
-                            foo2["time"] -= time_of_trigger[rows_with_data, None]
-                            extracted_data.append(foo2)
-                        else:
-                            extracted_data.append(np.nanmean(foo))
-                        
+            if average_window and np.allclose(np.diff(timeaxis), dt, atol=0.05):
+                averaged = average_within_window_assuming_linear_time_reduceat(values=applicable_data.values, timeaxis=timeaxis, begins=begins+time_of_trigger, lengths=lengths, check_linearity=False)
+                extracted_data = averaged
             else:
-                if not _HAS_RUST:
-                    raise ValueError()
-                if not average_window:
-                    raise NotImplementedError()
-                
-                
-                _time_of_first_not_nan_value = applicable_data["time"][:, 0].values
-                time_of_trigger = -1 * applicable_data.attrs["gridcoloffset"][0] * 1e9 + _time_of_first_not_nan_value
-                
-                if _time_of_first_not_nan_value.shape != (1,):
-                    raise NotImplementedError
-                
-                if applicable_data.shape[0] != 1:
-                    raise NotImplementedError
-                
-                # print(_time_of_first_not_nan_value.shape)
-                # print(applicable_data.shape)
-                # print(applicable_data["time"].shape)
-                # print(begins)
-                # print(jnp.array(applicable_data["time"]))
-                
-                #keep the absolute values low to avoid float accuracy problems... (?)
-                time_offset = applicable_data["time"][0,0]
-                applicable_data_time = (applicable_data["time"]-time_offset)[0,:]
-                # print(time_of_trigger)
-                # print(time_offset)
-                time_of_trigger = time_of_trigger[0]-time_offset
-                
-                extracted_data = qpmfli_downsample_rust.py_extract_data(np.asarray(applicable_data[0,:],dtype=np.float32), np.asarray(applicable_data_time,dtype=np.float32),
-                                                       np.asarray(begins,dtype=np.float32), np.asarray(lengths,dtype=np.float32), time_of_trigger)
-                
-                # print(extracted_data)
+
+                for b, l in zip(begins, lengths):
+                    # _time_of_first_not_nan_value = applicable_data.where(~np.isnan(applicable_data), drop=True)["time"][:, 0].values
+
+                    # print(b, b+l)
+    
+                    foo = applicable_data.where((applicable_data["time"] >= (time_of_trigger + b)[:, None]) & (
+                            applicable_data["time"] <= (time_of_trigger + b + l)[:, None]), drop=False)
+                    if not average_window:
+                        foo = foo.copy()
+                        foo2 = foo.where(~np.isnan(foo), drop=True)
+                        rows_with_data = np.sum(~np.isnan(foo), axis=-1) > 0
+                        foo2["time"] -= time_of_trigger[rows_with_data, None]
+                        extracted_data.append(foo2)
+                    else:
+                        extracted_data.append(np.nanmean(foo))
                 
             data_by_channel.update({cn: extracted_data})
         masked_data[window_name] = data_by_channel

@@ -2,9 +2,6 @@
 """
 import matplotlib.pyplot as plt
 import numpy as np
-import jax
-import jax.numpy as jnp
-import jax.lax as lax
 
 """
 
@@ -21,25 +18,9 @@ def average_within_window_assuming_linear_time_reduceat(values:np.ndarray, timea
 
 	assert not check_linearity or np.allclose(np.diff(timeaxis), dt)
 
-	# from ns to bins: i_bin = np.round(t-o)/dt)
-
-	# print((begins)/dt)
-	# print((begins+lengths)/dt)
-
-	# print("TA")
-	# print(values)
-	# print(timeaxis)
-	# print(begins)
-
-	# plt.plot(timeaxis, values.flatten())
-
-
 	begin_indeces = np.round((begins-o)/dt).astype(int)
 	end_indeces = np.round((begins+lengths-o)/dt).astype(int)
-	# print(begin_indeces, end_indeces)
-	# print(timeaxis.shape)
 
-	# print(begin_indeces, end_indeces)
 	begin_index_below, end_index_below = (begin_indeces<0), (end_indeces<0)
 	begin_above_below, end_above_below = (begin_indeces>=values.shape[-1]), (end_indeces>=values.shape[-1])
 	out_of_range = begin_index_below|end_index_below|begin_above_below|end_above_below
@@ -59,32 +40,8 @@ def average_within_window_assuming_linear_time_reduceat(values:np.ndarray, timea
 	assert selected.shape[-1] == len(width)
 	averaged = selected/np.maximum(1, width)
 
-	# plt.plot(begins+lengths/2, averaged.flatten(), marker="o")
-	# plt.show()
-
 	# averaged[np.isinf(averaged)] = np.nan # this should not be necessary, as the inf through 1/width is taken care of by the next line. if infs are now within the returned data, than it should be due to infs in the raw data.
 	averaged[:, out_of_range&(width<=0)] = np.nan
-
-	return averaged
-
-@jax.jit
-def average_within_window_assuming_linear_time_jitted(values:np.ndarray, timeaxis:np.ndarray, begins:np.ndarray, lengths:np.ndarray) -> np.ndarray:
-
-	dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)
-	# o = timeaxis[0]
-
-	begin_indeces = jnp.round((begins)/dt).astype(int)
-	end_indeces = jnp.round((begins+lengths)/dt).astype(int)
-	width = end_indeces - begin_indeces
-
-	mask = jnp.zeros((timeaxis.shape[0], begins.shape[0]))
-
-	averaged = jnp.nanmean(values, axis=-1)
-	reduce_indeces = jnp.vstack([begin_indeces, end_indeces]).T.flatten()
-	all_summed = jnp.add.reduceat(values, reduce_indeces, axis=-1)
-	selected = all_summed[..., ::2]
-
-	averaged = selected/width
 
 	return averaged
 
@@ -111,21 +68,3 @@ def test_average_within_window_assuming_linear_time_reduceat_2(benchmark):
 	averaged = benchmark(average_within_window_assuming_linear_time_reduceat, values, timeaxis, begins, lengths, True)
 
 	assert np.allclose(averaged, np.array([[1e-5], [1e-5], [1e-5]]))
-
-def test_average_within_window_assuming_linear_time_2_jitted(benchmark):
-
-	values = np.ones((3, 100_000))*1e-5
-	timeaxis = np.linspace(0, 1, 100_000)
-
-	begins = np.array([0])
-	lengths = np.array([1])
-
-	averaged = benchmark(average_within_window_assuming_linear_time_jitted, jnp.array(values), jnp.array(timeaxis), jnp.array(begins), jnp.array(lengths))
-
-	assert np.allclose(averaged, np.array([[1e-5], [1e-5], [1e-5]]))
-
-
-
-
-
-

@@ -16,7 +16,14 @@ import xarray as xr
 from qupulse.hardware.dacs.dac_base import DAC
 from qupulse.utils.types import TimeType
 
-from .numpy_magic import average_within_window_assuming_linear_time_reduceat
+try:
+    from qupulse.utils.performance import average_windows
+except ImportError:
+    from .numpy_magic import average_within_window_assuming_linear_time_reduceat
+
+    def average_windows(time, values, begins, ends):
+        return average_within_window_assuming_linear_time_reduceat(values, time, begins, ends - begins, False)
+
 
 try:
     # zhinst fires a DeprecationWarning from its own code in some versions...
@@ -130,7 +137,10 @@ def postprocessing_crop_windows(
             # print(f"{np.allclose(np.diff(timeaxis), dt, atol=0.05)=}")
 
             if average_window and np.allclose(np.diff(timeaxis), dt, atol=0.05):
-                averaged = average_within_window_assuming_linear_time_reduceat(values=applicable_data.values, timeaxis=timeaxis, begins=begins+time_of_trigger, lengths=lengths, check_linearity=False)
+                calc_begins = begins + time_of_trigger
+                ends = calc_begins + lengths
+                averaged = average_windows(timeaxis, values=applicable_data.values,
+                                           begins=calc_begins, ends=ends)
                 extracted_data = averaged
             else:
 

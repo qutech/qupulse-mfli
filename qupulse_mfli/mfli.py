@@ -128,18 +128,13 @@ def postprocessing_crop_windows(
                 assert len(timeaxis.shape) == 1
                 dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)
 
-                print(f"{np.diff(timeaxis)=}")
-                print(f"{dt=}")
-                # import pdb; pdb.set_trace()
-
-                if average_window and np.allclose(np.diff(timeaxis), dt, atol=0.05):
+                if average_window and np.allclose(np.diff(timeaxis, axis=-1), dt, atol=0.05):
                     calc_begins = begins + time_of_trigger[r]
                     ends = calc_begins + lengths
                     averaged = average_windows(timeaxis, values=applicable_row.values,
                                                begins=calc_begins, ends=ends)
                     extracted_data = averaged
                 else:
-
                     for b, l in zip(begins, lengths):
         
                         foo = applicable_row.where((applicable_row["time"] >= (time_of_trigger[r] + b)) & (
@@ -854,17 +849,17 @@ class MFLIDAQ(DAC):
                 _the_warning_string = f"Parsing some data did not work. This might fix itself later, when the missing data is retrieved from the device. If not, clearing the memory (i.e. self.clear_memory()), resetting the daq_module (i.e. self.reset_daq_module()), or setting the field to the selected program (i.e., self.currently_set_program=None) to None and then rearming the original program might work. For debugging purposes, one might want to call the measure function with the return_raw=True parameter."
                 try:
                     that_shot_parsed = program.operations[0](serial=self.serial, recorded_data=that_shot, program=program, fail_on_empty=fail_on_empty)
-                # except IndexError as e:
-                #     traceback.print_exc()
-                #     warnings.warn(_the_warning_string)
+                except IndexError as e:
+                    traceback.print_exc()
+                    warnings.warn(_the_warning_string)
                 except KeyError as e:
                     traceback.print_exc()
                     warnings.warn(_the_warning_string)
-                # except ValueError as e:
-                #     if "The received data for channel" in str(e):
-                #         pass
-                #     else:
-                #         raise
+                except ValueError as e:
+                    if "The received data for channel" in str(e):
+                        pass
+                    else:
+                        raise
                 else:
                     # the parsing worked, we can now remove the data from the memory
                     results.append(that_shot_parsed)

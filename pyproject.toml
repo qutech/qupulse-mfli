@@ -47,3 +47,14 @@ path = "qupulse_mfli/__init__.py"
 include = [
     "/qupulse_mfli",
 ]
+
+[tool.hatch.envs.default]
+dependencies = [
+  "pytest", "pytest-benchmark"
+]
+[tool.hatch.envs.default.scripts]
+test = "python -m pytest {args:tests}"
+
+
+[[tool.hatch.envs.all.matrix]]
+python = ["3.8", "3.9", "3.10", "3.11", "3.12"]

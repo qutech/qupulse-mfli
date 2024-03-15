@@ -11,18 +11,18 @@ def average_within_window_assuming_linear_time_reduceat(values:np.ndarray, timea
 
 	assert not check_linearity or np.allclose(np.diff(timeaxis), dt)
 
-	begin_indeces = np.round((begins-o)/dt).astype(int)
-	end_indeces = np.round((begins+lengths-o)/dt).astype(int)
+	begin_indeces = np.floor((begins-o)/dt).astype(int)
+	end_indeces = np.floor((begins+lengths-o)/dt).astype(int)
 
 	begin_index_below, end_index_below = (begin_indeces<0), (end_indeces<0)
-	begin_above_below, end_above_below = (begin_indeces>=values.shape[-1]), (end_indeces>=values.shape[-1])
+	begin_above_below, end_above_below = (begin_indeces>=values.shape[-1]), (end_indeces>values.shape[-1])
 	out_of_range = begin_index_below|end_index_below|begin_above_below|end_above_below
 
 	begin_indeces[begin_index_below] = 0
 	begin_indeces[begin_above_below] = values.shape[-1]-1
 	
 	end_indeces[end_index_below] = 0
-	end_indeces[end_above_below] = values.shape[-1]-1
+	end_indeces[end_above_below|(end_indeces>=values.shape[-1])] = values.shape[-1]-1
 
 	width = end_indeces - begin_indeces
 

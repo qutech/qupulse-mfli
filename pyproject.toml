@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qupulse-mfli"
+dynamic = ["version"]
+readme = "README.md"
+license = "GPL-3.0"
+requires-python = ">=3.8"
+authors = [
+    { name = "Quantum Technology Group RWTH Aachen University" },
+    { name = "Paul Surrey <paul.surrey@rwth-aachen.de>" },
+]
+keywords = [
+    "control",
+    "physics",
+    "pulse",
+    "quantum",
+    "qubit",
+]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "numpy",
+    "qupulse",
+    "xarray",
+    "zhinst",
+    "zhinst-core",
+    "zhinst-utils",
+]
+
+[tool.hatch.version]
+path = "qupulse_mfli/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/qupulse_mfli",
+]

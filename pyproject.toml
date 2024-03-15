@@ -35,6 +35,11 @@ dependencies = [
     "zhinst-utils",
 ]
 
+[project.urls]
+Documentation = "https://github.com/qutech/qupulse-mfli#readme"
+Issues = "https://github.com/qutech/qupulse-mfli/issues"
+Source = "https://github.com/qutech/qupulse-mfli"
+
 [tool.hatch.version]
 path = "qupulse_mfli/__init__.py"
 

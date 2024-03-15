@@ -34,6 +34,7 @@ dependencies = [
     "zhinst-core",
     "zhinst-utils",
 ]
+description = "MFLI diver for qupulse"
 
 [project.urls]
 Documentation = "https://github.com/qutech/qupulse-mfli#readme"

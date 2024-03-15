@@ -38,3 +38,31 @@ def test_average_within_window_assuming_linear_time_reduceat_3(benchmark):
 	averaged = benchmark(average_within_window_assuming_linear_time_reduceat, values, timeaxis, begins, lengths, True)
 
 	assert len(averaged == 100_000)
+
+
+def get_interesting_testing_pairs():
+
+	# pairs testing if the alignment is correct
+	data = np.arange(10)
+	timeaxis = np.arange(10)
+	
+	begins = np.array([0, 3, 6])
+	lengths = np.array([3, 3, 3])
+	expected = np.array([1, 4, 7])
+	yield data, timeaxis, begins, lengths, expected
+
+	begins = np.array([0, 0, 0])
+	lengths = np.array([0, 1, 3])
+	expected = np.array([0, 0, 1])
+	yield data, timeaxis, begins, lengths, expected
+
+	begins = np.array([9, 8, 9, 9])
+	lengths = np.array([0, 2, 1, 3])
+	expected = np.array([9, (8+9)/2, 9, np.nan])
+	yield data, timeaxis, begins, lengths, expected
+
+def test_various_interesting_ones():
+
+	for d, t, b, l, e in get_interesting_testing_pairs():
+		averaged = average_within_window_assuming_linear_time_reduceat(d, t, b, l, True)
+		np.testing.assert_allclose(averaged, e.astype(float))

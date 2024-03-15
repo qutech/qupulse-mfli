@@ -59,7 +59,7 @@ def postprocessing_crop_windows(
                 serial:str,
                 recorded_data: Mapping[str, List[xr.DataArray]],
                 program: "MFLIProgram",
-                fail_on_empty: bool = True, average_window:bool=False, sort_along_time:bool=True,
+                fail_on_empty: bool = True, average_window:bool=False, sort_along_time:bool=True, drop_nans:bool=False
                 ) -> Mapping[str, Mapping[str, List[Union[float, xr.DataArray]]]]:
     """ This function parses the recorded data and extracts the measurement masks
     """
@@ -103,7 +103,8 @@ def postprocessing_crop_windows(
                     f"for channel '{cn}' only {len(recorded_data[cn])} shots are given. This does not allow for taking element [-1-{shot_index}]")
                 continue
             applicable_data = recorded_data[cn][-1 - shot_index]
-            applicable_data = applicable_data.where(~np.isnan(applicable_data), drop=True)
+            if drop_nans:
+                applicable_data = applicable_data.where(~np.isnan(applicable_data), drop=True)
 
             if len(applicable_data) == 0 or np.product([*applicable_data.shape]) == 0:
                 if fail_on_empty:
@@ -114,27 +115,14 @@ def postprocessing_crop_windows(
 
             extracted_data = []
             
-            # ### print(_time_of_first_not_nan_value.shape)
-            # print(applicable_data.shape)
-            # print(applicable_data["time"].shape)
-            # print(begins)
-            # # print()
-            # print(applicable_data["time"])
-            
             _time_of_first_not_nan_value = applicable_data["time"][:, 0].values
             time_of_trigger = -1 * applicable_data.attrs["gridcoloffset"][
                         0] * 1e9 + _time_of_first_not_nan_value
 
             assert np.product(applicable_data["time"].shape) == applicable_data["time"].shape[-1]
-            # print(applicable_data["time"])
             timeaxis = applicable_data["time"].values.squeeze()
             assert len(timeaxis.shape) == 1
             dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)
-
-            # print(f"evenly spaced windows")
-            # print(np.diff(timeaxis), dt)
-            # print(f"{np.allclose(np.diff(timeaxis), dt, atol=0.05)}")
-            # print(f"{np.allclose(np.diff(timeaxis), dt, atol=0.05)=}")
 
             if average_window and np.allclose(np.diff(timeaxis), dt, atol=0.05):
                 calc_begins = begins + time_of_trigger
@@ -145,9 +133,6 @@ def postprocessing_crop_windows(
             else:
 
                 for b, l in zip(begins, lengths):
-                    # _time_of_first_not_nan_value = applicable_data.where(~np.isnan(applicable_data), drop=True)["time"][:, 0].values
-
-                    # print(b, b+l)
     
                     foo = applicable_data.where((applicable_data["time"] >= (time_of_trigger + b)[:, None]) & (
                             applicable_data["time"] <= (time_of_trigger + b + l)[:, None]), drop=False)

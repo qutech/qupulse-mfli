@@ -59,7 +59,7 @@ def postprocessing_crop_windows(
                 serial:str,
                 recorded_data: Mapping[str, List[xr.DataArray]],
                 program: "MFLIProgram",
-                fail_on_empty: bool = True, average_window:bool=False, sort_along_time:bool=True, drop_nans:bool=False
+                fail_on_empty: bool = True, average_window:bool=False, sort_along_time:bool=True
                 ) -> Mapping[str, Mapping[str, List[Union[float, xr.DataArray]]]]:
     """ This function parses the recorded data and extracts the measurement masks
     """
@@ -103,8 +103,7 @@ def postprocessing_crop_windows(
                     f"for channel '{cn}' only {len(recorded_data[cn])} shots are given. This does not allow for taking element [-1-{shot_index}]")
                 continue
             applicable_data = recorded_data[cn][-1 - shot_index]
-            if drop_nans:
-                applicable_data = applicable_data.where(~np.isnan(applicable_data), drop=True)
+            applicable_data = applicable_data.where(~np.isnan(applicable_data), drop=True)
 
             if len(applicable_data) == 0 or np.product([*applicable_data.shape]) == 0:
                 if fail_on_empty:
@@ -113,39 +112,49 @@ def postprocessing_crop_windows(
                     warnings.warn(f"The received data for channel {_cn} is empty.")
                     continue
 
-            extracted_data = []
-            
+            # 
             _time_of_first_not_nan_value = applicable_data["time"][:, 0].values
             time_of_trigger = -1 * applicable_data.attrs["gridcoloffset"][
                         0] * 1e9 + _time_of_first_not_nan_value
+            time_of_trigger = time_of_trigger.reshape((len(applicable_data["row"]), ))
 
-            assert np.product(applicable_data["time"].shape) == applicable_data["time"].shape[-1]
-            timeaxis = applicable_data["time"].values.squeeze()
-            assert len(timeaxis.shape) == 1
-            dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)
+            all_extracted_data = []
+            for ri, r in enumerate(applicable_data["row"]):
+                extracted_data = []
+                applicable_row = applicable_data.loc[{"row":r}]
 
-            if average_window and np.allclose(np.diff(timeaxis), dt, atol=0.05):
-                calc_begins = begins + time_of_trigger
-                ends = calc_begins + lengths
-                averaged = average_windows(timeaxis, values=applicable_data.values,
-                                           begins=calc_begins, ends=ends)
-                extracted_data = averaged
-            else:
+                assert np.product(applicable_row["time"].shape) == applicable_row["time"].shape[-1], "There might have been multiple rows recorded."
+                timeaxis = applicable_row["time"].values.squeeze()
+                assert len(timeaxis.shape) == 1
+                dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)
 
-                for b, l in zip(begins, lengths):
-    
-                    foo = applicable_data.where((applicable_data["time"] >= (time_of_trigger + b)[:, None]) & (
-                            applicable_data["time"] <= (time_of_trigger + b + l)[:, None]), drop=False)
-                    if not average_window:
-                        foo = foo.copy()
-                        foo2 = foo.where(~np.isnan(foo), drop=True)
-                        rows_with_data = np.sum(~np.isnan(foo), axis=-1) > 0
-                        foo2["time"] -= time_of_trigger[rows_with_data, None]
-                        extracted_data.append(foo2)
-                    else:
-                        extracted_data.append(np.nanmean(foo))
+                print(f"{np.diff(timeaxis)=}")
+                print(f"{dt=}")
+                # import pdb; pdb.set_trace()
+
+                if average_window and np.allclose(np.diff(timeaxis), dt, atol=0.05):
+                    calc_begins = begins + time_of_trigger[r]
+                    ends = calc_begins + lengths
+                    averaged = average_windows(timeaxis, values=applicable_row.values,
+                                               begins=calc_begins, ends=ends)
+                    extracted_data = averaged
+                else:
+
+                    for b, l in zip(begins, lengths):
+        
+                        foo = applicable_row.where((applicable_row["time"] >= (time_of_trigger[r] + b)) & (
+                                applicable_row["time"] <= (time_of_trigger[r] + b + l)), drop=False)
+                        if not average_window:
+                            foo = foo.copy()
+                            foo2 = foo.where(~np.isnan(foo), drop=True)
+                            rows_with_data = np.sum(~np.isnan(foo), axis=-1) > 0
+                            foo2["time"] -= time_of_trigger[r][rows_with_data]
+                            extracted_data.append(foo2)
+                        else:
+                            extracted_data.append(np.nanmean(foo))
+                all_extracted_data.append(extracted_data)
                 
-            data_by_channel.update({cn: extracted_data})
+            data_by_channel.update({cn: all_extracted_data})
         masked_data[window_name] = data_by_channel
 
     return masked_data
@@ -845,17 +854,17 @@ class MFLIDAQ(DAC):
                 _the_warning_string = f"Parsing some data did not work. This might fix itself later, when the missing data is retrieved from the device. If not, clearing the memory (i.e. self.clear_memory()), resetting the daq_module (i.e. self.reset_daq_module()), or setting the field to the selected program (i.e., self.currently_set_program=None) to None and then rearming the original program might work. For debugging purposes, one might want to call the measure function with the return_raw=True parameter."
                 try:
                     that_shot_parsed = program.operations[0](serial=self.serial, recorded_data=that_shot, program=program, fail_on_empty=fail_on_empty)
-                except IndexError as e:
-                    traceback.print_exc()
-                    warnings.warn(_the_warning_string)
+                # except IndexError as e:
+                #     traceback.print_exc()
+                #     warnings.warn(_the_warning_string)
                 except KeyError as e:
                     traceback.print_exc()
                     warnings.warn(_the_warning_string)
-                except ValueError as e:
-                    if "The received data for channel" in str(e):
-                        pass
-                    else:
-                        raise
+                # except ValueError as e:
+                #     if "The received data for channel" in str(e):
+                #         pass
+                #     else:
+                #         raise
                 else:
                     # the parsing worked, we can now remove the data from the memory
                     results.append(that_shot_parsed)

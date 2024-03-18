@@ -59,7 +59,9 @@ def postprocessing_crop_windows(
                 serial:str,
                 recorded_data: Mapping[str, List[xr.DataArray]],
                 program: "MFLIProgram",
-                fail_on_empty: bool = True, average_window:bool=False, sort_along_time:bool=True
+                fail_on_empty: bool = True, 
+                average_window:bool=False, 
+                sort_along_time:bool=True
                 ) -> Mapping[str, Mapping[str, List[Union[float, xr.DataArray]]]]:
     """ This function parses the recorded data and extracts the measurement masks
     """
@@ -178,7 +180,7 @@ class MFLIProgram:
     windows: Optional[Dict[str, Tuple[np.ndarray, np.ndarray]]] = dataclasses.field(default=None)
     trigger_settings: Optional[TriggerSettings] = dataclasses.field(default=None)
     other_settings: Dict[str, Any] = dataclasses.field(default_factory=dict)
-    operations: Any = dataclasses.field(default=postprocessing_crop_windows)
+    operations: Any = dataclasses.field(default=None)
 
     def get_minimal_duration(self) -> float:
         return max(np.max(begins + lengths) for (begins, lengths) in self.windows.values())
@@ -292,6 +294,8 @@ class MFLIDAQ(DAC):
         self.currently_set_program: Optional[str] = None
         self._armed_program: Optional[MFLIProgram] = None
 
+        self.register_operations(None, postprocessing_crop_windows)
+
     @classmethod
     def connect_to(cls, device_serial: str = None, **init_kwargs):
         """
@@ -354,8 +358,9 @@ class MFLIDAQ(DAC):
                 program.channel_mapping = dict()
             program.channel_mapping[window_name] = set(channel_path)
 
-    def register_measurement_windows(self, program_name: str, windows: Dict[str, Tuple[np.ndarray,
-                                                                                       np.ndarray]]) -> None:
+    def register_measurement_windows(self, 
+        program_name: str, 
+        windows: Dict[str, Tuple[np.ndarray, np.ndarray]]) -> None:
         """Register measurement windows for a given program. Overwrites previously defined measurement windows for
         this program.
 
@@ -475,7 +480,12 @@ class MFLIDAQ(DAC):
             operations: DAC specific instructions what to do with the data recorded by the device.
         """
 
-        self.programs.setdefault(program_name, MFLIProgram()).operations = operations
+        if program_name is None:
+            program = self.default_program
+        else:
+            program = self.programs.setdefault(program_name, MFLIProgram())
+
+        program.operations = operations
 
     def _get_demod(self, channel: str):
         """ This function gets the demodulator corresponding to a channel
@@ -615,7 +625,8 @@ class MFLIDAQ(DAC):
             # set the buffer size according to the largest measurement window
             # TODO one might be able to implement this a bit more cleverly
             measurement_duration = self.programs[program_name].get_minimal_duration()
-            measurement_duration += (ts.post_delay + -1 * ts.delay) * 1e9
+            if ts is not None:
+                measurement_duration += (ts.post_delay + -1 * ts.delay) * 1e9
             larges_number_of_samples = max_sample_rate / 10 ** 9 * measurement_duration
             larges_number_of_samples = np.ceil(larges_number_of_samples)
             self.daq.set('grid/cols', larges_number_of_samples)
@@ -722,7 +733,10 @@ class MFLIDAQ(DAC):
 
         # wait until the data acquisition has finished
         # TODO implement timeout
-        _endless_flag_helper = program.trigger_settings.is_endless()
+        if program.trigger_settings is not None:
+            _endless_flag_helper = program.trigger_settings.is_endless()
+        else:
+            _endless_flag_helper = False
 
         start_waiting = time.time()
         if not self.daq.finished() and wait:

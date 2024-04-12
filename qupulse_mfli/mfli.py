@@ -759,7 +759,7 @@ class MFLIDAQ(DAC):
 
         # go through the returned object and extract the data of interest
 
-        recorded_data = _convert_timestamps(data, self.serial)
+        recorded_data = _convert_timestamps(data, self.serial, clockbase)
         if not recorded_data:
             warnings.warn(f"No data has been recorded!")
 
@@ -884,7 +884,7 @@ class MFLIDAQ(DAC):
         return self.get_mfli_data(wait, timeout, wait_time, return_raw, fail_if_incomplete, fail_on_empty)
 
 
-def _convert_timestamps(data, device_serial: str):
+def _convert_timestamps(data, device_serial: str, clockbase):
     device_serial = device_serial.lower()
     try:
         device_data = data[device_serial]

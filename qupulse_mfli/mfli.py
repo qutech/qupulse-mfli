@@ -759,31 +759,9 @@ class MFLIDAQ(DAC):
 
         # go through the returned object and extract the data of interest
 
-        recorded_data = {}
-
-        for device_name, device_data in data.items():
-            if device_name == self.serial.lower():
-                for input_name, input_data in device_data.items():
-                    for signal_name, signal_data in input_data.items():
-                        for final_level_name, final_level_data in signal_data.items():
-                            channel_name = f"/{device_name}/{input_name}/{signal_name}/{final_level_name}".lower()
-                            channel_data = []
-                            for i, d in enumerate(final_level_data):
-                                converted_timestamps = {
-                                    "systemtime_converted": d['header']["systemtime"] / clockbase * 1e9,
-                                    "createdtimestamp_converted": d['header'][
-                                                                      "createdtimestamp"] / clockbase * 1e9,
-                                    "changedtimestamp_converted": d['header'][
-                                                                      "changedtimestamp"] / clockbase * 1e9,
-                                }
-                                channel_data.append(xr.DataArray(
-                                    data=d["value"],
-                                    coords={'time': (['row', 'col'], d["timestamp"] / clockbase * 1e9)},
-                                    dims=['row', 'col'],
-                                    name=channel_name,
-                                    attrs={**d['header'], **converted_timestamps, "device_serial": self.serial,
-                                           "channel_name": channel_name}))
-                            recorded_data[channel_name] = channel_data
+        recorded_data = _convert_timestamps(data, self.serial)
+        if not recorded_data:
+            warnings.warn(f"No data has been recorded!")
 
         # check if the shapes of the received measurements are the same.
         # this is needed as the assumption, that the lock-in/data server up-samples slower channels to match the one with the highest rate.
@@ -793,9 +771,6 @@ class MFLIDAQ(DAC):
                 set([e for a in recorded_shapes.values() for e in a])) > 1:
             warnings.warn(
                 f"For at least one received channel entries with different dimensions are present. This might lead to undesired masking! (The code will not raise an exception.) ({recorded_shapes})")
-
-        if len(recorded_data) == 0:
-            warnings.warn(f"No data has been recorded!")
 
         # update measurements in local memory
         for k, v in recorded_data.items():
@@ -907,3 +882,36 @@ class MFLIDAQ(DAC):
                                                               Dict[str, Dict[str, List[xr.DataArray]]],
                                                               None]:
         return self.get_mfli_data(wait, timeout, wait_time, return_raw, fail_if_incomplete, fail_on_empty)
+
+
+def _convert_timestamps(data, device_serial: str):
+    device_serial = device_serial.lower()
+    try:
+        device_data = data[device_serial]
+    except KeyError:
+        return
+
+    recorded_data = {}
+
+    for input_name, input_data in device_data.items():
+        for signal_name, signal_data in input_data.items():
+            for final_level_name, final_level_data in signal_data.items():
+                channel_name = f"/{device_serial}/{input_name}/{signal_name}/{final_level_name}".lower()
+                channel_data = []
+                for i, d in enumerate(final_level_data):
+                    converted_timestamps = {
+                        "systemtime_converted": d['header']["systemtime"] / clockbase * 1e9,
+                        "createdtimestamp_converted": d['header'][
+                                                          "createdtimestamp"] / clockbase * 1e9,
+                        "changedtimestamp_converted": d['header'][
+                                                          "changedtimestamp"] / clockbase * 1e9,
+                    }
+                    channel_data.append(xr.DataArray(
+                        data=d["value"],
+                        coords={'time': (['row', 'col'], d["timestamp"] / clockbase * 1e9)},
+                        dims=['row', 'col'],
+                        name=channel_name,
+                        attrs={**d['header'], **converted_timestamps, "device_serial": device_serial,
+                               "channel_name": channel_name}))
+                recorded_data[channel_name] = channel_data
+    return recorded_data

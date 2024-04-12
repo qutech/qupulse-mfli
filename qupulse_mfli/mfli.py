@@ -884,14 +884,14 @@ class MFLIDAQ(DAC):
         return self.get_mfli_data(wait, timeout, wait_time, return_raw, fail_if_incomplete, fail_on_empty)
 
 
-def _convert_timestamps(data, device_serial: str, clockbase):
+def _convert_timestamps(data, device_serial: str, clockbase) -> dict:
     device_serial = device_serial.lower()
+    recorded_data = {}
+
     try:
         device_data = data[device_serial]
     except KeyError:
-        return
-
-    recorded_data = {}
+        return recorded_data
 
     for input_name, input_data in device_data.items():
         for signal_name, signal_data in input_data.items():

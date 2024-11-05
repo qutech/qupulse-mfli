@@ -130,13 +130,15 @@ def postprocessing_crop_windows(
                 assert len(timeaxis.shape) == 1
                 dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)
 
-                if average_window and np.allclose(np.diff(timeaxis, axis=-1), dt, atol=0.05):
+                if average_window and np.allclose(np.diff(timeaxis, axis=-1), dt, atol=2):
                     calc_begins = begins + time_of_trigger[r]
                     ends = calc_begins + lengths
                     averaged = average_windows(timeaxis, values=applicable_row.values,
                                                begins=calc_begins, ends=ends)
                     extracted_data = averaged
                 else:
+                    print("Falling back to a very slow window extraction method.")
+
                     for b, l in zip(begins, lengths):
         
                         foo = applicable_row.where((applicable_row["time"] >= (time_of_trigger[r] + b)) & (

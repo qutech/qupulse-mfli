@@ -271,14 +271,12 @@ class ApiSessionInterceptor:
                     # Expect the first argument to be a list of (path, value) tuples
                     for pair in args[0]:
                         path, value = pair
-                        if not path.endswith('commandtable/data'): #ignore lengthy CT
-                            self.last_values[path] = value
+                        self.last_values[path] = value
                 else:
                     # For other set methods (e.g., setInt, setString, etc.)
                     if len(args) >= 2:
                         path, value = args[0], args[1]
-                        if not path.endswith('commandtable/data'): #ignore lengthy CT
-                            self.last_values[path] = value
+                        self.last_values[path] = value
                 # Delegate the call to the original method
                 return orig_attr(*args, **kwargs)
             return hooked

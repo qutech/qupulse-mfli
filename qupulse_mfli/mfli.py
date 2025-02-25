@@ -382,9 +382,15 @@ class MFLIDAQ(DAC):
         self._init_daq_module()
     
     @property
-    def recent_state(self) -> Dict[str,Any]:
+    def recent_sent_state(self) -> Dict[str,Any]:
         if self._save_recent_state:
-            return self._api_session.last_values
+            return self.api_session.last_values
+        return {}
+    
+    @property
+    def recent_read_state(self) -> Dict[str,Any]:
+        if self._save_recent_state:
+            return self.api_session._gather_known()
         return {}
     
     def register_measurement_channel(self, program_name: Union[str, None] = None, window_name: str = None,

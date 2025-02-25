@@ -259,7 +259,8 @@ class ApiSessionInterceptor:
     def __init__(self, session: zhinst_core.ziDAQServer):
         self._session = session
         self.last_values = {}  # Stores the most recent value for each path
-
+        self._to_gather = set()
+        
     def __getattr__(self, name):
         # Get the original attribute from the session
         orig_attr = getattr(self._session, name)
@@ -272,18 +273,31 @@ class ApiSessionInterceptor:
                     for pair in args[0]:
                         path, value = pair
                         self.last_values[path] = value
+                        self._to_gather.add((name.replace('set','get'),path))
                 else:
                     # For other set methods (e.g., setInt, setString, etc.)
                     if len(args) >= 2:
                         path, value = args[0], args[1]
                         self.last_values[path] = value
+                        self._to_gather.add((name.replace('set','get'),path))
                 # Delegate the call to the original method
                 return orig_attr(*args, **kwargs)
             return hooked
 
         # If it's not a callable "set" method, return the attribute directly.
         return orig_attr
-
+    
+    def _gather_known(self) -> Dict[str,Any]:
+        
+        gathered = {}
+        for attr,path in self._to_gather:
+            try:
+                gathered[path] = getattr(self._session,attr)(path)
+            except Exception as e:
+                gathered[path] = repr(e)
+                
+        return gathered
+    
 
 class MFLIDAQ(DAC):
     """ This class contains the driver for using the DAQ module of an Zuerich Instruments MFLI with qupulse.

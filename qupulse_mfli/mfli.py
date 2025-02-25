@@ -255,6 +255,50 @@ class MFLIProgram:
         return new_program
 
 
+class ApiSessionInterceptor:
+    def __init__(self, session: zhinst_core.ziDAQServer):
+        self._session = session
+        self.last_values = {}  # Stores the most recent value for each path
+        self._to_gather = set()
+        
+    def __getattr__(self, name):
+        # Get the original attribute from the session
+        orig_attr = getattr(self._session, name)
+        
+        # Intercept callable attributes that start with "set"
+        if callable(orig_attr) and name.startswith("set"):
+            def hooked(*args, **kwargs):
+                if name == "set":
+                    # Expect the first argument to be a list of (path, value) tuples
+                    for pair in args[0]:
+                        path, value = pair
+                        self.last_values[path] = value
+                        self._to_gather.add((name.replace('set','get'),path))
+                else:
+                    # For other set methods (e.g., setInt, setString, etc.)
+                    if len(args) >= 2:
+                        path, value = args[0], args[1]
+                        self.last_values[path] = value
+                        self._to_gather.add((name.replace('set','get'),path))
+                # Delegate the call to the original method
+                return orig_attr(*args, **kwargs)
+            return hooked
+
+        # If it's not a callable "set" method, return the attribute directly.
+        return orig_attr
+    
+    def _gather_known(self) -> Dict[str,Any]:
+        
+        gathered = {}
+        for attr,path in self._to_gather:
+            try:
+                gathered[path] = getattr(self._session,attr)(path)
+            except Exception as e:
+                gathered[path] = repr(e)
+                
+        return gathered
+    
+
 class MFLIDAQ(DAC):
     """ This class contains the driver for using the DAQ module of an Zuerich Instruments MFLI with qupulse.
     """
@@ -264,7 +308,8 @@ class MFLIDAQ(DAC):
                  device_props: Dict,
                  name: str = 'Lockin',
                  reset: bool = False,
-                 timeout: float = 20) -> None:
+                 timeout: float = 20,
+                 save_recent_state: bool = True) -> None:
         """
         :param reset:             Reset device before initialization
         :param timeout:           Timeout in seconds for uploading
@@ -273,6 +318,9 @@ class MFLIDAQ(DAC):
         self.name = name
         
         self.api_session = api_session
+        self._save_recent_state = save_recent_state
+        if self._save_recent_state:
+            self.api_session = ApiSessionInterceptor(self.api_session)
         self.device_props = device_props
         self.default_timeout = timeout
         self.serial = device_props["deviceid"]
@@ -332,7 +380,19 @@ class MFLIDAQ(DAC):
         self.daq.finish()
         self.daq.clear()
         self._init_daq_module()
-
+    
+    @property
+    def recent_sent_state(self) -> Dict[str,Any]:
+        if self._save_recent_state:
+            return self.api_session.last_values
+        return {}
+    
+    @property
+    def recent_read_state(self) -> Dict[str,Any]:
+        if self._save_recent_state:
+            return self.api_session._gather_known()
+        return {}
+    
     def register_measurement_channel(self, program_name: Union[str, None] = None, window_name: str = None,
                                      channel_path: Union[str, Sequence[str]] = ()):
         """ This function saves the channel one wants to record with a certain program

@@ -107,7 +107,7 @@ def postprocessing_crop_windows(
             applicable_data = recorded_data[cn][-1 - shot_index]
             applicable_data = applicable_data.where(~np.isnan(applicable_data), drop=True)
 
-            if len(applicable_data) == 0 or np.product([*applicable_data.shape]) == 0:
+            if len(applicable_data) == 0 or np.prod([*applicable_data.shape]) == 0:
                 if fail_on_empty:
                     raise ValueError(f"The received data for channel {_cn} is empty.")
                 else:
@@ -125,7 +125,7 @@ def postprocessing_crop_windows(
                 extracted_data = []
                 applicable_row = applicable_data.loc[{"row":r}]
 
-                assert np.product(applicable_row["time"].shape) == applicable_row["time"].shape[-1], "There might have been multiple rows recorded."
+                assert np.prod(applicable_row["time"].shape) == applicable_row["time"].shape[-1], "There might have been multiple rows recorded."
                 timeaxis = applicable_row["time"].values.squeeze()
                 assert len(timeaxis.shape) == 1
                 dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)

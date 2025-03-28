@@ -102,7 +102,8 @@ def postprocessing_crop_windows(
             if len(recorded_data[cn]) <= shot_index:
                 # then we do not have data for this shot_index, which is intended to cover multiple not yet collected measurements. And thus will not have anything to save.
                 warnings.warn(
-                    f"for channel '{cn}' only {len(recorded_data[cn])} shots are given. This does not allow for taking element [-1-{shot_index}]")
+                    f"for channel '{cn}' only {len(recorded_data[cn])} shots are given. "
+                    f"This does not allow for taking element [-1-{shot_index}]")
                 continue
             applicable_data = recorded_data[cn][-1 - shot_index]
             applicable_data = applicable_data.where(~np.isnan(applicable_data), drop=True)
@@ -474,6 +475,19 @@ class MFLIDAQ(DAC):
             The number of measurement to perform for one arm call. This will result in self.daq.finished() not returning true until all measurements are recorded. This will equal to trigger_count*measurement_count trigger events. The self.daq.progress() field counts the number of trigger events. If the count is set to np.inf the acquisition is not stopped after any number of triggers are received, only by calling self.stop_acquisition() or self.daq.finish(). Data, potentially incomplete and thus filled with nan, can be retrieved also in the continuous mode with the right setting of the measurement function (i.e. wait=False and fail_if_incomplete=False).
         other_settings
             Other settings to set after the standard trigger settings are send to the data server / device.
+
+        Examples
+        --------
+        >>> mfli: MFLIDAQ = ...
+        >>> mfli.register_trigger_settings(program_name="run_for_ever",
+        ...                          trigger_input=f"demods/0/sample.AuxIn1", # here AuxInN referese to the printer label N+1
+        ...                           edge="rising",
+        ...                           trigger_count=3, # this defines the number of triggers to capture in one measurement (i.e. rows). E.g. one measurement contains 3 Trigger events, which might be somehting one could do when crafting the programs carefully.
+        ...                           level=.5, # this sets the trigger level
+        ...                           measurement_count=np.inf, # this defined the number of rounds that are to be measured (e.g. how often the "single" button should be pressed). E.g. after one arm call, i would like to perform np.inf measurements
+        ...                           other_settings={"holdoff/time": 1e-3} # this sets the duration for which new triggers are ignored
+        ...                           )
+
         """
 
         if edge not in ["rising", "falling", "both"]:
@@ -567,151 +581,141 @@ class MFLIDAQ(DAC):
 
         # check if program_name specified program is selected and important parameter set to the lock-in
         if self.currently_set_program is None or self.currently_set_program != program_name or force:
-
-            self.daq.finish()
-            self.daq.unsubscribe('*')
-
-            # TODO TODO TODO TODO TODO TODO TODO TODO
-            # # if the program is changed, the not returned data is removed to not have conflicts with the data parsing operations. The cleaner way would be to keep track of the time the program is changed.
-            # if self.currently_set_program != program_name:
-            # 	self.read()
-            # 	self.daq.clear()
-            # 	self._init_daq_module()
-            # TODO TODO TODO TODO TODO TODO TODO TODO
-
-            program = self.default_program.merge(self.programs[program_name])
-
-            for c in program.required_channels():
-
-                # activate corresponding de-modulators
-                demod = self._get_demod(c)
-                try:
-                    self.api_session.setInt(f'/{self.serial}/{demod}/enable', 1)
-                except RuntimeError as e:
-                    if "ZIAPINotFoundException" in e.args[0] or f"Path /{self.serial}/{demod}/enable not found." in \
-                            e.args[0]:
-                        # ok, the channel can not be enabled. Then the user should be caring about that.
-                        warnings.warn(
-                            f"The channel {c} does not have an interface for enabling it. If needed, this can be done using the web interface.")
-                        pass
-                    else:
-                        raise
-
-                # select the value to measure
-                self.daq.subscribe(f'/{self.serial}/{c}')
-
-            # # check if sample rates are the same as when register_measurement_windows() was called
-            # for k, v in self.programs[program_name]['masks'].items():
-            # 	if len(v["channels"]) != len(v["sample_rates"]):
-            # 		raise ValueError(f"There is a mismatch between number the channels to be used and the known sample rates.")
-            # 	for c, r in zip(v["channels"], v["sample_rates"]):
-            # 		if self._get_sample_rates(c) != r:
-            # 			raise ValueError(f"The sample rate for channel '{c}' has changed. Please call register_measurement_windows() again.")
-
-            # set the buffer size based on the largest sample rate
-            # if no sample rate is readable, as for example when only AUXIN channels are used, the first demodulator is activated and the corresponding rate is used
-
-            raw_currently_set_sample_rates: List[Union[TimeType, None]] = []
-            for c in program.required_channels():
-                raw_currently_set_sample_rates.append(self._get_sample_rates(c))
-
-            logging.info(
-                f"sample rates: {[(float(e) if e is not None else None) for e in raw_currently_set_sample_rates]}")
-
-            # CAUTION
-            # The MFLI lock-ins up-sample slower channels to fit the fastest sample rate.
-            # This is the cased for the Lab One Data Server 21.08.20515 and the MFLi Firmware 67629.
-            # TODO it needs to be verified, that this code here is actually necessary. One could also query the AUXIN using one of the demods.
-            foo = [x for x in raw_currently_set_sample_rates if x is not None]
-            if len(foo) == 0 and self.assumed_minimal_sample_rate is None:
-                # Ok, we activate the first demodulator
-                self.api_session.setInt(f'/{self.serial}/demods/0/enable', 1)
-                foo.append(self._get_sample_rates(f'/{self.serial}/demods/0/sample.R'))
-            if self.assumed_minimal_sample_rate is not None:
-                foo.append(TimeType().from_float(value=self.assumed_minimal_sample_rate, absolute_error=0))
-            max_sample_rate = max(foo)
-            currently_set_sample_rates = [max_sample_rate] * len(raw_currently_set_sample_rates)
-
-            # set daq module settings to standard things
-            # TODO one might want to extend the driver to support more methods
-            self.daq.set('grid/mode', 4)  # this corresponds to Mode: Exact(on-grid)
-            # the following two lines set the row repetitions to 1 and off
-            self.daq.set('grid/repetitions', 1)
-            self.daq.set('grid/rowrepetition', 0)
-
-            # setting trigger settings
-            ts = program.trigger_settings
-
-            rows = 1
-            if ts is not None:
-                rows = ts.trigger_count
-                # selecting the trigger channel
-                if ts.trigger_input is not None:
-
-                    if ts.is_endless():
-                        self.daq.set('endless', 1)
-                    else:
-                        self.daq.set('endless', 0)
-                        # defines how many triggers are to be recorded in single mode i.e. endless==0
-                        self.daq.set('count', ts.measurement_count)
-
-                    if "trig" in ts.trigger_input.lower():
-                        self.daq.set("type", 6)
-                    else:
-                        self.daq.set("type", 1)
-
-                    self.daq.set("triggernode", f"/{self.serial}/{ts.trigger_input}")
-
-                    edge_key = ["rising", "falling", "both"].index(ts.edge)
-                    self.daq.set("edge", edge_key)
-
-                    if "trigin" in ts.trigger_input.lower():
-                        _trigger_id = int(ts.trigger_input.split("TrigIn")[-1])
-                        assert _trigger_id in [1, 2]
-                        self.api_session.setDouble(f'/{self.serial}/triggers/in/{_trigger_id-1}/level', ts.level);
-                    else:
-                        self.daq.set("level", ts.level)
-
-                    self.daq.set("delay", ts.delay)
-                    self.daq.set('bandwidth', 0)
-
-                else:
-                    self.daq.set("type", 0)
-
-                self.daq.set('count', rows)
-
-            if program.other_settings:
-                for k, v in program.other_settings.items():
-                    self.daq.set(k, v)
-
-            # set the buffer size according to the largest measurement window
-            # TODO one might be able to implement this a bit more cleverly
-            measurement_duration = self.programs[program_name].get_minimal_duration()
-            if ts is not None:
-                measurement_duration += (ts.post_delay + -1 * ts.delay) * 1e9
-            larges_number_of_samples = max_sample_rate / 10 ** 9 * measurement_duration
-            larges_number_of_samples = np.ceil(larges_number_of_samples)
-            self.daq.set('grid/cols', larges_number_of_samples)
-            self.daq.set('grid/rows', rows)  # this corresponds to measuring only for one trigger
-
-            # self.daq.set("buffersize", 2*measurement_duration) # that the buffer size is set to be larger than the duration is something that the SM script did.
-            # # --> in the current version and/or configuration, this path is read-only.
-
-            self.currently_set_program = program_name
-
-            logging.info(
-                f"Will record {larges_number_of_samples} samples per row for {measurement_duration * 1e-9}s!")  # TODO this will have to change if proper multi triggers with over multiple rows is going to be used.
-            logging.info(f"{rows} row(s) will be recorded.")
-            logging.info(f"the following trigger settings will be used: {ts}")
-            logging.info(f"MFLI returns a duration of {self.daq.get('duration')['duration'][0]}s")
-
-            self._armed_program = program
+            self._arm_new_program(program_name)
 
         # execute daq
         self.daq.execute()
 
         # wait until changes have taken place
         self.api_session.sync()
+
+    def _arm_new_program(self, program_name):
+        self.daq.finish()
+        self.daq.unsubscribe('*')
+        # TODO TODO TODO TODO TODO TODO TODO TODO
+        # # if the program is changed, the not returned data is removed to not have conflicts with the data parsing operations. The cleaner way would be to keep track of the time the program is changed.
+        # if self.currently_set_program != program_name:
+        # 	self.read()
+        # 	self.daq.clear()
+        # 	self._init_daq_module()
+        # TODO TODO TODO TODO TODO TODO TODO TODO
+        program = self.default_program.merge(self.programs[program_name])
+        for c in program.required_channels():
+
+            # activate corresponding de-modulators
+            demod = self._get_demod(c)
+            try:
+                self.api_session.setInt(f'/{self.serial}/{demod}/enable', 1)
+            except RuntimeError as e:
+                if "ZIAPINotFoundException" in e.args[0] or f"Path /{self.serial}/{demod}/enable not found." in \
+                        e.args[0]:
+                    # ok, the channel can not be enabled. Then the user should be caring about that.
+                    # The channel does not have an interface for enabling it.
+                    # If needed, this can be done using the web interface.
+                    pass
+                else:
+                    raise
+
+            # select the value to measure
+            self.daq.subscribe(f'/{self.serial}/{c}')
+        # # check if sample rates are the same as when register_measurement_windows() was called
+        # for k, v in self.programs[program_name]['masks'].items():
+        # 	if len(v["channels"]) != len(v["sample_rates"]):
+        # 		raise ValueError(f"There is a mismatch between number the channels to be used and the known sample rates.")
+        # 	for c, r in zip(v["channels"], v["sample_rates"]):
+        # 		if self._get_sample_rates(c) != r:
+        # 			raise ValueError(f"The sample rate for channel '{c}' has changed. Please call register_measurement_windows() again.")
+        # set the buffer size based on the largest sample rate
+        # if no sample rate is readable, as for example when only AUXIN channels are used, the first demodulator is activated and the corresponding rate is used
+        raw_currently_set_sample_rates: List[Union[TimeType, None]] = []
+        for c in program.required_channels():
+            raw_currently_set_sample_rates.append(self._get_sample_rates(c))
+        logging.info(
+            f"sample rates: {[(float(e) if e is not None else None) for e in raw_currently_set_sample_rates]}")
+        # CAUTION
+        # The MFLI lock-ins up-sample slower channels to fit the fastest sample rate.
+        # This is the cased for the Lab One Data Server 21.08.20515 and the MFLi Firmware 67629.
+        # TODO it needs to be verified, that this code here is actually necessary. One could also query the AUXIN using one of the demods.
+        foo = [x for x in raw_currently_set_sample_rates if x is not None]
+        if len(foo) == 0 and self.assumed_minimal_sample_rate is None:
+            # Ok, we activate the first demodulator
+            self.api_session.setInt(f'/{self.serial}/demods/0/enable', 1)
+            foo.append(self._get_sample_rates(f'/{self.serial}/demods/0/sample.R'))
+        if self.assumed_minimal_sample_rate is not None:
+            foo.append(TimeType().from_float(value=self.assumed_minimal_sample_rate, absolute_error=0))
+        max_sample_rate = max(foo)
+        currently_set_sample_rates = [max_sample_rate] * len(raw_currently_set_sample_rates)
+        # set daq module settings to standard things
+        # TODO one might want to extend the driver to support more methods
+        self.daq.set('grid/mode', 4)  # this corresponds to Mode: Exact(on-grid)
+        # the following two lines set the row repetitions to 1 and off
+        self.daq.set('grid/repetitions', 1)
+        self.daq.set('grid/rowrepetition', 0)
+        # setting trigger settings
+        ts = program.trigger_settings
+        if ts is None:
+            rows = 1
+        else:
+            rows = self._apply_trigger_settings(ts)
+
+        if program.other_settings:
+            for k, v in program.other_settings.items():
+                self.daq.set(k, v)
+        # set the buffer size according to the largest measurement window
+        # TODO one might be able to implement this a bit more cleverly
+        measurement_duration = self.programs[program_name].get_minimal_duration()
+        if ts is not None:
+            measurement_duration += (ts.post_delay + -1 * ts.delay) * 1e9
+        larges_number_of_samples = max_sample_rate / 10 ** 9 * measurement_duration
+        larges_number_of_samples = np.ceil(larges_number_of_samples)
+        self.daq.set('grid/cols', larges_number_of_samples)
+        self.daq.set('grid/rows', rows)  # this corresponds to measuring only for one trigger
+        # self.daq.set("buffersize", 2*measurement_duration) # that the buffer size is set to be larger than the duration is something that the SM script did.
+        # # --> in the current version and/or configuration, this path is read-only.
+        self.currently_set_program = program_name
+        logging.info(
+            f"Will record {larges_number_of_samples} samples per row for {measurement_duration * 1e-9}s!")  # TODO this will have to change if proper multi triggers with over multiple rows is going to be used.
+        logging.info(f"{rows} row(s) will be recorded.")
+        logging.info(f"the following trigger settings will be used: {ts}")
+        logging.info(f"MFLI returns a duration of {self.daq.get('duration')['duration'][0]}s")
+        self._armed_program = program
+
+    def _apply_trigger_settings(self, ts):
+        rows = ts.trigger_count
+        # selecting the trigger channel
+        if ts.trigger_input is not None:
+
+            if ts.is_endless():
+                self.daq.set('endless', 1)
+            else:
+                self.daq.set('endless', 0)
+                # defines how many triggers are to be recorded in single mode i.e. endless==0
+                self.daq.set('count', ts.measurement_count)
+
+            if "trig" in ts.trigger_input.lower():
+                self.daq.set("type", 6)
+            else:
+                self.daq.set("type", 1)
+
+            self.daq.set("triggernode", f"/{self.serial}/{ts.trigger_input}")
+
+            edge_key = ["rising", "falling", "both"].index(ts.edge)
+            self.daq.set("edge", edge_key)
+
+            if "trigin" in ts.trigger_input.lower():
+                _trigger_id = int(ts.trigger_input.split("TrigIn")[-1])
+                assert _trigger_id in [1, 2]
+                self.api_session.setDouble(f'/{self.serial}/triggers/in/{_trigger_id - 1}/level', ts.level);
+            else:
+                self.daq.set("level", ts.level)
+
+            self.daq.set("delay", ts.delay)
+            self.daq.set('bandwidth', 0)
+
+        else:
+            self.daq.set("type", 0)
+        self.daq.set('count', rows)
+        return rows
 
     def unarm_program(self):
         """ unarms the lock-in. This should be program independent.
@@ -821,31 +825,9 @@ class MFLIDAQ(DAC):
 
         # go through the returned object and extract the data of interest
 
-        recorded_data = {}
-
-        for device_name, device_data in data.items():
-            if device_name == self.serial.lower():
-                for input_name, input_data in device_data.items():
-                    for signal_name, signal_data in input_data.items():
-                        for final_level_name, final_level_data in signal_data.items():
-                            channel_name = f"/{device_name}/{input_name}/{signal_name}/{final_level_name}".lower()
-                            channel_data = []
-                            for i, d in enumerate(final_level_data):
-                                converted_timestamps = {
-                                    "systemtime_converted": d['header']["systemtime"] / clockbase * 1e9,
-                                    "createdtimestamp_converted": d['header'][
-                                                                      "createdtimestamp"] / clockbase * 1e9,
-                                    "changedtimestamp_converted": d['header'][
-                                                                      "changedtimestamp"] / clockbase * 1e9,
-                                }
-                                channel_data.append(xr.DataArray(
-                                    data=d["value"],
-                                    coords={'time': (['row', 'col'], d["timestamp"] / clockbase * 1e9)},
-                                    dims=['row', 'col'],
-                                    name=channel_name,
-                                    attrs={**d['header'], **converted_timestamps, "device_serial": self.serial,
-                                           "channel_name": channel_name}))
-                            recorded_data[channel_name] = channel_data
+        recorded_data = _convert_timestamps(data, self.serial, clockbase)
+        if not recorded_data:
+            warnings.warn(f"No data has been recorded!")
 
         # check if the shapes of the received measurements are the same.
         # this is needed as the assumption, that the lock-in/data server up-samples slower channels to match the one with the highest rate.
@@ -855,9 +837,6 @@ class MFLIDAQ(DAC):
                 set([e for a in recorded_shapes.values() for e in a])) > 1:
             warnings.warn(
                 f"For at least one received channel entries with different dimensions are present. This might lead to undesired masking! (The code will not raise an exception.) ({recorded_shapes})")
-
-        if len(recorded_data) == 0:
-            warnings.warn(f"No data has been recorded!")
 
         # update measurements in local memory
         for k, v in recorded_data.items():
@@ -969,3 +948,36 @@ class MFLIDAQ(DAC):
                                                               Dict[str, Dict[str, List[xr.DataArray]]],
                                                               None]:
         return self.get_mfli_data(wait, timeout, wait_time, return_raw, fail_if_incomplete, fail_on_empty)
+
+
+def _convert_timestamps(data, device_serial: str, clockbase) -> dict:
+    device_serial = device_serial.lower()
+    recorded_data = {}
+
+    try:
+        device_data = data[device_serial]
+    except KeyError:
+        return recorded_data
+
+    for input_name, input_data in device_data.items():
+        for signal_name, signal_data in input_data.items():
+            for final_level_name, final_level_data in signal_data.items():
+                channel_name = f"/{device_serial}/{input_name}/{signal_name}/{final_level_name}".lower()
+                channel_data = []
+                for i, d in enumerate(final_level_data):
+                    converted_timestamps = {
+                        "systemtime_converted": d['header']["systemtime"] / clockbase * 1e9,
+                        "createdtimestamp_converted": d['header'][
+                                                          "createdtimestamp"] / clockbase * 1e9,
+                        "changedtimestamp_converted": d['header'][
+                                                          "changedtimestamp"] / clockbase * 1e9,
+                    }
+                    channel_data.append(xr.DataArray(
+                        data=d["value"],
+                        coords={'time': (['row', 'col'], d["timestamp"] / clockbase * 1e9)},
+                        dims=['row', 'col'],
+                        name=channel_name,
+                        attrs={**d['header'], **converted_timestamps, "device_serial": device_serial,
+                               "channel_name": channel_name}))
+                recorded_data[channel_name] = channel_data
+    return recorded_data

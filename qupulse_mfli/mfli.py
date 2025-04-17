@@ -7,6 +7,7 @@ import dataclasses
 import logging
 import time
 import traceback
+import threading
 import warnings
 from typing import Dict, Tuple, Iterable, Union, List, Set, Any, Sequence, Mapping, Optional, Literal
 
@@ -173,6 +174,264 @@ def postprocessing_average_within_windows(
                 program = program,
                 fail_on_empty = fail_on_empty, 
                 average_window = True)
+
+
+def average_in_windows_numpy(data:np.ndarray, start:np.ndarray, length:np.ndarray) -> np.ndarray:
+    """ 
+    This function can be used to average measurement windows. This function uses a low level numpy function. The code has been copied from qupulse-mfli.
+    """
+    n = len(start)
+    c = data.shape[0]
+    assert len(data.shape) == 2, "The data has to be given in the shape of (<channel>, <time>)"
+
+    # finding out which indices are not within the recorded data
+    end = start+length
+    begin_index_below, end_index_below = (start<0), (end<0)
+    begin_above_below, end_above_below = (start>=data.shape[-1]), (end>data.shape[-1])
+    out_of_range = begin_index_below|end_index_below|begin_above_below|end_above_below
+
+    # now we can remove the bins that are not within the range
+    start, end = start[~out_of_range], end[~out_of_range]
+
+    # forming the array to define the indices for the reduceat function.
+    reduce_indices = np.vstack([start, end]).T.flatten()
+
+    # adding one last element to the data and indices, such that the last element also works.
+    data_to_reduce = np.concatenate([data, np.full((*data.shape[:-1], 1), np.nan)], axis=-1)
+    indices_to_reduce = np.concatenate([reduce_indices, [len(data)]])
+
+    # calling the reduce at
+    all_summed = np.add.reduceat(data_to_reduce, indices_to_reduce, axis=-1)[..., :-1]
+
+    # extracting the meaning full data points
+    selected = all_summed[..., ::2]
+
+    # averaging
+    assert selected.shape[-1] == len(start)
+    count = np.maximum(1, length[~out_of_range])
+    averaged = selected/count
+
+    output = np.ones((c, n))*np.nan
+    output[:, ~out_of_range] = averaged
+
+    return selected, count, averaged, out_of_range, output
+
+
+# def griddify_ds_reduce_at(ds: Dataset, measurement_prefix: str = "M", additional_holdoff: float = 0.1, sample_parameter_name: str = "qupulse_inst_alazar_samples"):
+#     """Griddify a dataset which includes a 2D grid of measurements.
+
+#     The measurements need to be as nx*ny results for the measurement window named measurement_prefix.
+
+#     This function then averages each measurement window (Excluding the additional_holdoff
+#     at the start and end) of each window.
+
+#     Finally the data is gridded into 2D shape with coordinates extracted from
+#     ds.attrs['custom_metadata']['sweeps'].
+
+#     Args:
+#         ds (xarray.Dataset):
+#             The dataset to grid.
+#         measurement_prefix (str, optional):
+#             The start of the name of the measurements to grid. (default: 'M')
+#         additional_holdoff (float, optional):
+#             Fraction of data to exclude at the start and end of each measurement window.
+#             (default: 0.1)
+#         sample_parameter_name (str, optional):
+#             The name of the time base parameter from which to filter. (default: qupulse_inst_alazar_samples)
+
+#     Returns:
+#         ds_gridded (xarray.Dataset)
+#         ds_processed (xarray.Dataset, optional)
+#     """
+
+#     custom_metadata = json.loads(ds.attrs["custom_metadata"])
+#     measurements = np.array(json.loads(ds.attrs["measurement_windows"])[0][measurement_prefix])
+#     specs = custom_metadata["sweeps"][measurement_prefix]
+    
+#     nx, ny = specs["nx"], specs["ny"]
+#     x_ranges, y_ranges = specs["x_gate_ranges"], specs["y_gate_ranges"]
+#     x_gates, y_gates = specs["x_gates"], specs["y_gates"]
+
+#     print("relating measurement windows to indices", end="; ", flush=True)
+#     # translating the measurement windows into indices
+#     m_start = measurements[:, 0]
+#     m_length = np.diff(measurements, axis=-1)
+
+#     t = ds.coords[sample_parameter_name].values
+
+#     # searching for the start and end indeces of the measurement windows
+#     all_keypoints = measurements.copy().flatten()
+#     kp_order = np.argsort(all_keypoints)
+#     kp_ordered = all_keypoints[kp_order]
+#     kp_ids = np.ones(len(all_keypoints))*np.nan
+
+#     j = 0
+#     for i, ti in enumerate(t): # for every point in the recorded data
+#         while j<len(kp_ids) and kp_ordered[j] <= ti: # for all keypoints that have a time index smaller or equal to the current point in time
+#             kp_ids[j] = i # save the index of the current point
+#             j += 1 # and go to the next keypoint
+
+#     assert np.all(~np.isnan(kp_ids)), "Somehow some start and end points were not found"
+
+#     # reverting the key point sorting:
+#     all_kp_ids = kp_ids[np.argsort(kp_ordered)].reshape((-1, 2))
+
+#     start_points = all_kp_ids[:, 0].astype(int)
+#     lengths = np.diff(all_kp_ids, axis=-1).flatten().astype(int)
+
+#     # averaging down:
+#     print("averaging", end="; ", flush=True)
+#     raw_data = np.array([ds[variable_name].values  for variable_name in list(ds.data_vars)]).T
+#     downsamples = average_in_windows_numpy(data=raw_data, start=start_points, length=lengths)
+
+#     print("repackaging", end="; ", flush=True)
+#     ds_gridded = Dataset(
+#         {
+#             key: (("y", "x"), downsamples[i].reshape((ny, nx)))
+#             for i, key in enumerate(ds.keys())
+#         },
+#         coords={
+#             f"{gate}_x": ("x", np.linspace(*x_ranges[i], nx))
+#             for i, gate in enumerate(x_gates)
+#         } | {
+#             f"{gate}_y": ("y", np.linspace(*y_ranges[i], ny)
+#             ) for i, gate in enumerate(y_gates)
+#         }
+#     )
+#     ds_gridded.attrs = ds.attrs
+#     ds_gridded.attrs["custom_metadata"] = custom_metadata
+
+#     print("done")
+#     return ds_gridded
+
+def polling_averaging_thread(
+    api_session, serial, channels:List[str], trigger:int, 
+    windows:np.ndarray, output_array:np.ndarray, 
+    running_flag:threading.Event, stop_flag:threading.Event, timeout=np.inf,):
+    """ This thread polls data and averages it into the specified windows
+
+    to measure the demodulated signal, the node "/dev3869/demods/0/sample" might be subscribed to.
+
+
+    windows : np.ndarray
+        An array of shape (-1, 2), where the second dimension has the start time of a measurement window and the end time in ns.
+
+    """
+
+    # making sure the dimensions all add up
+    N_windows = len(windows)
+    N_channels = len(channels)
+    assert windows.shape == (N_windows, 2)
+    assert output_array.shape == (N_channels, N_windows)
+
+    assert trigger in [0, 1]
+    assert all([c in ["x", "y", "frequency", "phase", "dio", "trigger", "auxin0", "auxin1"] for c in channels])
+
+    summed_array = np.zeros(output_array.shape)
+    count_array = np.zeros(output_array.shape)
+    finished_windows = 0
+    current_window_id = 0
+    timestamp_of_first_trigger_high = None
+    last_completed_window = 0
+
+    # sorting the measurement windows
+    windows = windows.flatten() # we are looking for the index of the start and the end time for each window
+    kp_order = np.argsort(windows)
+    kp_ordered = windows[kp_order]
+
+    try:
+        # subscribing to the node
+        base_node = f"/{serial}/demods/0/sample".lower()
+        api_session.subscribe(base_node)
+        api_session.set(f'/{serial}/demods/0/enable', 1)
+        clock_base = api_session.getDouble(f'/{serial}/clockbase')
+
+        # getting some data to clear the buffer
+        _ = api_session.poll(recording_time_s=0.1, timeout_ms=100, flags=0, flat=True)
+
+        # announcing that the loop is now measuring
+        running_flag.set()
+
+        while not stop_flag.is_set() and finished_windows < N_windows:
+            polled_data = api_session.poll(recording_time_s=0.1, timeout_ms=100, flags=0, flat=True)
+            # print(f"{polled_data=}")
+            if base_node in polled_data:
+                rd = polled_data[base_node]
+                time_axis = rd["timestamp"]
+
+                # fining the first timestamp at which the trigger is high.
+                if timestamp_of_first_trigger_high is None:
+
+                    """
+                    trigger 1 high: &0b0101
+                    trigger 1 high: &0b1010
+                    """
+
+                    trigger_mask = rd["trigger"]&(0b0101<<trigger)
+
+                    if np.any(trigger_mask):
+                        first_index = np.where(trigger_mask)[0][0]
+                        timestamp_of_first_trigger_high = time_axis[first_index]
+
+                if timestamp_of_first_trigger_high is not None:
+                    time_axis -= timestamp_of_first_trigger_high
+                    time_in_ns = time_axis/clock_base*1e9 # the time after the trigger has been received 
+
+                    # searching for the start and end indices of the measurement windows
+                    kp_ids = np.ones(len(windows))*np.nan
+                    j = 0
+                    for i, ti in enumerate(time_in_ns): # for every point in the recorded data
+                        while j<len(kp_ids) and kp_ordered[j] <= ti: # for all keypoints that have a time index smaller or equal to the current point in time
+                            kp_ids[j] = i # save the index of the current point
+                            j += 1 # and go to the next keypoint
+
+                    # reverting the key point sorting:
+                    all_kp_ids = kp_ids[np.argsort(kp_ordered)].reshape((-1, 2))
+
+                    start_points = all_kp_ids[:, 0]
+                    lengths = np.diff(all_kp_ids, axis=-1).flatten()
+
+                    # print(start_points, lengths)
+
+                    raise NotImplementedError("Somehow the averaging code is wrong....")
+
+                    out_of_range_mask = np.isnan(start_points)|np.isnan(lengths)
+
+                    start_points = start_points[~out_of_range_mask].astype(int)
+                    lengths = lengths[~out_of_range_mask].astype(int)
+
+                    print(start_points, lengths)
+
+                    # averaging down:
+                    raw_data = np.array([rd[c] for c in channels])
+                    # print(raw_data.shape)
+                    selected, count, averaged, out_of_range, output = average_in_windows_numpy(data=raw_data, start=start_points, length=lengths)
+                    print(count)
+                    print(out_of_range)
+                    print(summed_array)
+                    summed_array[:, ~out_of_range_mask][:, ~out_of_range] += selected
+                    count_array[:, ~out_of_range_mask][:, ~out_of_range] += count
+
+                    # summing together the completed windows
+                    contained_windows = np.where(lengths>0)[0]
+                    if len(contained_windows) > 0:
+                        new_completed_window = contained_windows[0]-1
+                        if new_completed_window >= 0:
+                            sl = slice(last_completed_window, new_completed_window)
+                            output_array[sl] = summed_array[sl]/count_array[sl]
+                            last_completed_window = new_completed_window
+
+                    # finding out if we have covered all points
+                    if time_in_ns[-1] >= kp_ordered[-1]:
+                        break
+
+                    # print(output_array)
+
+    finally:
+        running_flag.clear()
+        api_session.unsubscribe("*")
+
+    return output_array
 
 
 @dataclasses.dataclass

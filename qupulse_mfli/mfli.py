@@ -327,17 +327,15 @@ def polling_averaging_thread(
     assert trigger in [0, 1]
     assert all([c in ["x", "y", "frequency", "phase", "dio", "trigger", "auxin0", "auxin1"] for c in channels])
 
-    summed_array = np.zeros(output_array.shape)
-    count_array = np.zeros(output_array.shape)
-    finished_windows = 0
-    current_window_id = 0
+    summed_array = np.zeros(output_array.shape).astype(float)
+    count_array = np.zeros(output_array.shape).astype(float)
     timestamp_of_first_trigger_high = None
-    last_completed_window = 0
 
     # sorting the measurement windows
-    windows = windows.flatten() # we are looking for the index of the start and the end time for each window
-    kp_order = np.argsort(windows)
-    kp_ordered = windows[kp_order]
+    # we are looking for the index of the start and the end time for each window
+    windows_edges = windows.flatten() 
+    windows_edges_order = np.argsort(windows_edges)
+    windows_edges_ordered = windows_edges[windows_edges_order]
 
     try:
         # subscribing to the node
@@ -347,13 +345,16 @@ def polling_averaging_thread(
         clock_base = api_session.getDouble(f'/{serial}/clockbase')
 
         # getting some data to clear the buffer
-        _ = api_session.poll(recording_time_s=0.1, timeout_ms=100, flags=0, flat=True)
+        recording_time_s = 0.1 # the size of one chunk in s
+        timeout_ms = 100
+        _ = api_session.poll(recording_time_s=recording_time_s, timeout_ms=timeout_ms, flags=0, flat=True)
 
         # announcing that the loop is now measuring
         running_flag.set()
+        start_time = time.time()
 
-        while not stop_flag.is_set() and finished_windows < N_windows:
-            polled_data = api_session.poll(recording_time_s=0.1, timeout_ms=100, flags=0, flat=True)
+        while not stop_flag.is_set() and time.time()-start_time <= timeout:
+            polled_data = api_session.poll(recording_time_s=recording_time_s, timeout_ms=timeout_ms, flags=0, flat=True)
             # print(f"{polled_data=}")
             if base_node in polled_data:
                 rd = polled_data[base_node]
@@ -375,57 +376,50 @@ def polling_averaging_thread(
 
                 if timestamp_of_first_trigger_high is not None:
                     time_axis -= timestamp_of_first_trigger_high
-                    time_in_ns = time_axis/clock_base*1e9 # the time after the trigger has been received 
+                    time_in_ns = time_axis/clock_base*1e9 # the time after the trigger has been received
 
                     # searching for the start and end indices of the measurement windows
-                    kp_ids = np.ones(len(windows))*np.nan
+                    # this is done by finding the indices of all window start and end time points within the provided data.
+                    kp_ids = np.ones(len(windows_edges))*np.nan
                     j = 0
+                    # TODO ignore already completed windows
                     for i, ti in enumerate(time_in_ns): # for every point in the recorded data
-                        while j<len(kp_ids) and kp_ordered[j] <= ti: # for all keypoints that have a time index smaller or equal to the current point in time
+                        while j<len(kp_ids) and windows_edges_ordered[j] <= ti: # for all keypoints that have a time index smaller or equal to the current point in time
                             kp_ids[j] = i # save the index of the current point
                             j += 1 # and go to the next keypoint
 
                     # reverting the key point sorting:
-                    all_kp_ids = kp_ids[np.argsort(kp_ordered)].reshape((-1, 2))
+                    all_kp_ids = kp_ids[np.argsort(windows_edges_ordered)].reshape((-1, 2))
+
+                    # all_kp_ids contains now the start and the end index of the regions within the recorded data, that corresponds to the windows. The ids should fit to the numpy slice interface (i.e. data[start:end]).
+                    # np.nan will be filled in for the windows edges of the windows that have not been seen yet. When the start and the end value are the same, then the windows contains no point of the current chunk. This can also be the case, then the window has already been completed.
 
                     start_points = all_kp_ids[:, 0]
+                    end_points = all_kp_ids[:, 1]
                     lengths = np.diff(all_kp_ids, axis=-1).flatten()
 
-                    # print(start_points, lengths)
+                    # extending the windows whose end is not see in this chunk to the end of the chunk.
+                    end_points[np.isnan(end_points)] = len(time_axis)
 
-                    raise NotImplementedError("Somehow the averaging code is wrong....")
-
-                    out_of_range_mask = np.isnan(start_points)|np.isnan(lengths)
-
-                    start_points = start_points[~out_of_range_mask].astype(int)
-                    lengths = lengths[~out_of_range_mask].astype(int)
-
-                    print(start_points, lengths)
+                    already_completed = lengths == 0
+                    lengths = (end_points-start_points)[~already_completed].astype(int)
+                    start_points = start_points[~already_completed].astype(int)
 
                     # averaging down:
                     raw_data = np.array([rd[c] for c in channels])
-                    # print(raw_data.shape)
                     selected, count, averaged, out_of_range, output = average_in_windows_numpy(data=raw_data, start=start_points, length=lengths)
-                    print(count)
-                    print(out_of_range)
-                    print(summed_array)
-                    summed_array[:, ~out_of_range_mask][:, ~out_of_range] += selected
-                    count_array[:, ~out_of_range_mask][:, ~out_of_range] += count
+
+                    mask = ~already_completed
+                    mask[mask] &= ~out_of_range
+                    summed_array[:, mask] += selected
+                    count_array[:, mask] += count
 
                     # summing together the completed windows
-                    contained_windows = np.where(lengths>0)[0]
-                    if len(contained_windows) > 0:
-                        new_completed_window = contained_windows[0]-1
-                        if new_completed_window >= 0:
-                            sl = slice(last_completed_window, new_completed_window)
-                            output_array[sl] = summed_array[sl]/count_array[sl]
-                            last_completed_window = new_completed_window
+                    output_array[:, mask] = summed_array[:, mask]/count_array[:, mask]
 
                     # finding out if we have covered all points
-                    if time_in_ns[-1] >= kp_ordered[-1]:
+                    if time_in_ns[-1] >= windows_edges_ordered[-1]:
                         break
-
-                    # print(output_array)
 
     finally:
         running_flag.clear()

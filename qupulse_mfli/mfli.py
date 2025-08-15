@@ -305,7 +305,7 @@ def average_in_windows_numpy(data:np.ndarray, start:np.ndarray, length:np.ndarra
 #     return ds_gridded
 
 def polling_averaging_thread(
-    api_session, serial, channels:List[str], trigger:int, 
+    api_session, serial, channels:List[str], trigger:Union[None, int], 
     windows:np.ndarray, output_array:np.ndarray, 
     running_flag:threading.Event, stop_flag:threading.Event, timeout=np.inf,):
     """ This thread polls data and averages it into the specified windows
@@ -324,7 +324,7 @@ def polling_averaging_thread(
     assert windows.shape == (N_windows, 2)
     assert output_array.shape == (N_channels, N_windows)
 
-    assert trigger in [0, 1]
+    assert trigger in [None, 0, 1]
     assert all([c in ["x", "y", "frequency", "phase", "dio", "trigger", "auxin0", "auxin1"] for c in channels])
 
     summed_array = np.zeros(output_array.shape).astype(float)
@@ -363,16 +363,20 @@ def polling_averaging_thread(
                 # fining the first timestamp at which the trigger is high.
                 if timestamp_of_first_trigger_high is None:
 
-                    """
-                    trigger 1 high: &0b0101
-                    trigger 1 high: &0b1010
-                    """
+                    if trigger is None:
+                        timestamp_of_first_trigger_high = time_axis[0]
+                    else:
 
-                    trigger_mask = rd["trigger"]&(0b0101<<trigger)
+                        """
+                        trigger 1 high: &0b0101
+                        trigger 1 high: &0b1010
+                        """
 
-                    if np.any(trigger_mask):
-                        first_index = np.where(trigger_mask)[0][0]
-                        timestamp_of_first_trigger_high = time_axis[first_index]
+                        trigger_mask = rd["trigger"]&(0b0101<<trigger)
+
+                        if np.any(trigger_mask):
+                            first_index = np.where(trigger_mask)[0][0]
+                            timestamp_of_first_trigger_high = time_axis[first_index]
 
                 if timestamp_of_first_trigger_high is not None:
                     time_axis -= timestamp_of_first_trigger_high
@@ -1162,3 +1166,158 @@ class MFLIDAQ(DAC):
                                                               Dict[str, Dict[str, List[xr.DataArray]]],
                                                               None]:
         return self.get_mfli_data(wait, timeout, wait_time, return_raw, fail_if_incomplete, fail_on_empty)
+
+class MFLIPOLL(MFLIDAQ):
+    """ This class contains the driver for using the poll method of an Zuerich Instruments MFLI with qupulse.
+    """
+
+    def __init__(self,
+                 api_session: zhinst_core.ziDAQServer,
+                 device_props: Dict,
+                 name: str = 'Lockin',
+                 reset: bool = False,
+                 timeout: float = 20) -> None:
+        """
+        :param reset:             Reset device before initialization
+        :param timeout:           Timeout in seconds for uploading
+        """
+        
+        self.name = name
+        
+        self.api_session = api_session
+        self.device_props = device_props
+        self.default_timeout = timeout
+        self.serial = device_props["deviceid"]
+
+        self.assumed_minimal_sample_rate: Union[float, None] = None  # in units of Sa/s
+
+        if reset:
+            # Create a base configuration: Disable all available outputs, awgs, demods, scopes,...
+            zhinst.utils.disable_everything(self.api_session, self.serial)
+
+        self.default_program = MFLIProgram()
+        self.programs: Dict[str, MFLIProgram] = {}
+
+        self.currently_set_program: Optional[str] = None
+        self._armed_program: Optional[MFLIProgram] = None
+
+        self.thread = None
+        self.running_flag = threading.Event()
+        self.stop_flag = threading.Event()
+        self.current_output_array = None
+
+    def reset(self):
+        """ This function resets the device to a known default configuration.
+        """
+
+        zhinst.utils.disable_everything(self.api_session, self.serial)
+        self.clear()
+        self.programs.clear()
+
+    def arm_program(self, program_name: str) -> None:
+        """ This method will configure the mfli to stream the data to this pc and will start the acquisition thread.
+        """
+
+        self.unarm_program()
+
+        if stop_flag.is_set():
+            stop_flag.clear()
+
+        api_session = self.api_session
+        serial = self.serial
+
+        # obtaining the necessary information from the selected program
+        program = self.default_program.merge(self.programs[program_name])
+
+        # the channel that are to be recorded
+        channels = [c.lower() for c in program.required_channels()]
+
+        # hacking the "R" output by requesting both X, and Y
+        if "r" in channels:
+            raise NotImplementedError('the pull api only knows about the x and y components. R has to be calculated later. This is not yet implemented in this driver')
+            # new_channels = []
+            # for c in channels:
+            #     if c == "r":
+            #         new_channels.extend(["x", "y"])
+            #     else:
+            #         new_channels.append(c)
+            # channels = list(tuple(new_channels))
+
+        # which trigger is to be listened for
+        trigger = program.trigger_settings.trigger_input
+        assert trigger in [None, 0, 1]
+
+        # which measurement windows are to be recorded
+        window_names = list(program.windows.keys())
+        windows = np.array(list(program.windows.values())) # (<name>, <begin / length>, <n_window>)
+        windows = windows.transpose((1, 0, 2)) # (<begin / length>, <name>, <n_window>)
+        windows = windows.reshape((2, -1)) # (<begin / length>, <name> + <n_window>)
+        windows[:, 0] += windows[:, 1] # (<begin / end>, <name> + <n_window>)
+        windows = windows.T # (<name> + <n_window>, <begin / end>)
+
+        # calculating a timeout
+        timeout = program.get_minimal_duration()+60*1e9
+        
+        output_array = np.zeros((len(channels), len(windows)))*np.nan
+        self.current_output_array = output_array
+        
+        self.thread = threading.Thread(target=polling_averaging_thread, kwargs=dict(api_session=api_session, serial=serial, channels=channels, trigger=trigger, windows=windows, output_array=output_array, running_flag=running_flag, stop_flag=stop_flag, timeout=timeout))
+
+        # starting the acquisition thread
+        self.thread.start()
+        self._armed_program = program
+        self.currently_set_program = program_name
+
+    def measure_program(self, timeout:float=np.inf, wait:bool=True) -> Dict[str, Dict[str, List[xr.DataArray]]]:
+
+        # waiting until the pulse is completed
+        if wait:
+            start_time = time.time()
+            while running_flag.is_set() and time.time()-start_time <= timeout:
+                time.sleep(0.1)
+
+        # copying the obtained data
+        data = self.current_output_array.copy() # (channel, <name> + <n_window>)
+
+        # reverting the measurement window transformation
+        channels = len(self._armed_program.required_channels())
+        window_names = list(self._armed_program.windows.keys())
+        data = data.reshape((len(channels), len(window_names), -1))
+
+        # packaging the data
+        packaged = {}
+        for i, n in enumerate(window_names):
+            packaged[n] = {}
+            for j, c in enumerate(channels):
+                packaged[n][c] = data[j, i]
+
+        return packaged
+        
+
+    def unarm_program(self):
+        """ unarms the lock-in. This should be program independent.
+        """
+
+        self.stop_acquisition()
+
+        self._armed_program = None
+
+    def stop_acquisition(self):
+        if running_flag.is_set():
+            print("stopping the currently running program...")
+            stop_flag.set()
+            while running_flag.is_set():
+                time.sleep(0.1)
+
+    def delete_program(self, program_name: str) -> None:
+        """Delete program from internal memory."""
+
+        # this does not have an effect on the current implementation of the lock-in driver.
+
+        if self.currently_set_program == program_name:
+            self.unarm_program()
+
+        self.programs.pop(program_name)
+
+    def clear(self) -> None:
+        self.unarm_program()

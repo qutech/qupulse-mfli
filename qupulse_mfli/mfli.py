@@ -240,8 +240,8 @@ def test_average_in_windows_numpy():
 
 
 def polling_averaging_thread(
-    api_session, serial, channels:List[str], trigger:Union[None, int], 
-    windows:np.ndarray, output_array:np.ndarray, 
+    api_session, serial, channel_mapping:Dict[str, Set[str]], trigger:Union[None, int], 
+    windows:Dict[str, List[np.ndarray]], output_array:Dict[str, np.ndarray], 
     running_flag:threading.Event, stop_flag:threading.Event, timeout=np.inf,):
     """ This thread polls data and averages it into the specified windows
 
@@ -255,22 +255,19 @@ def polling_averaging_thread(
 
     # making sure the dimensions all add up
     N_windows = len(windows)
-    N_channels = len(channels)
-    assert windows.shape == (N_windows, 2)
-    assert output_array.shape == (N_channels, N_windows)
 
     assert trigger in [None, 0, 1]
-    assert all([c in ["x", "y", "frequency", "phase", "dio", "trigger", "auxin0", "auxin1"] for c in channels])
+    assert all([c in ["r", "x", "y", "frequency", "phase", "dio", "trigger", "auxin0", "auxin1"] for cg in channel_mapping.values() for c in cg])
 
-    summed_array = np.zeros(output_array.shape).astype(float)
-    count_array = np.zeros(output_array.shape).astype(float)
+    summed_array = {k:np.zeros(output_array[k].shape).astype(float) for k in windows.keys()}
+    count_array = {k:np.zeros(output_array[k].shape).astype(float) for k in windows.keys()}
     timestamp_of_first_trigger_high = None
 
     # sorting the measurement windows
     # we are looking for the index of the start and the end time for each window
-    windows_edges = windows.flatten() 
-    windows_edges_order = np.argsort(windows_edges)
-    windows_edges_ordered = windows_edges[windows_edges_order]
+    windows_edges = {k:np.array([v[0], v[0]+v[1]]).T.flatten() for k, v in windows.items()}
+    windows_edges_order = {k:np.argsort(e) for k, e in windows_edges.items()}
+    windows_edges_ordered = {k:windows_edges[k][e] for k, e in windows_edges_order.items()}
 
     try:
         # subscribing to the node
@@ -319,59 +316,60 @@ def polling_averaging_thread(
                     time_axis -= timestamp_of_first_trigger_high
                     time_in_ns = time_axis/clock_base*1e9 # the time after the trigger has been received
 
-                    # searching for the start and end indices of the measurement windows
-                    # this is done by finding the indices of all window start and end time points within the provided data.
-                    kp_ids = np.ones(len(windows_edges))*np.nan
-                    j = 0
-                    # TODO ignore already completed windows
-                    for i, ti in enumerate(time_in_ns): # for every point in the recorded data
-                        while j<len(kp_ids) and windows_edges_ordered[j] <= ti: # for all keypoints that have a time index smaller or equal to the current point in time
-                            kp_ids[j] = i # save the index of the current point
-                            j += 1 # and go to the next keypoint
+                    for k in windows_edges.keys():
 
-                    # reverting the key point sorting:
-                    all_kp_ids = kp_ids[np.argsort(windows_edges_ordered)].reshape((-1, 2))
+                        # searching for the start and end indices of the measurement windows
+                        # this is done by finding the indices of all window start and end time points within the provided data.
+                        kp_ids = np.ones(len(windows_edges[k]))*np.nan
+                        j = 0
+                        # TODO ignore already completed windows
+                        for i, ti in enumerate(time_in_ns): # for every point in the recorded data
+                            while j<len(kp_ids) and windows_edges_ordered[k][j] <= ti: # for all keypoints that have a time index smaller or equal to the current point in time
+                                kp_ids[j] = i # save the index of the current point
+                                j += 1 # and go to the next keypoint
 
-                    # all_kp_ids contains now the start and the end index of the regions within the recorded data, that corresponds to the windows. The ids should fit to the numpy slice interface (i.e. data[start:end+1]). I.e. all bins with with the start index and end index will be summed together.
-                    # np.nan will be filled in for the windows edges of the windows that have not been seen yet. When the start and the end value are the same, then the windows contains no point of the current chunk. This can also be the case, then the window has already been completed.
+                        # reverting the key point sorting:
+                        all_kp_ids = kp_ids[np.argsort(windows_edges_ordered[k])].reshape((-1, 2))
 
-                    start_points = all_kp_ids[:, 0]
-                    end_points = all_kp_ids[:, 1]
-                    lengths = np.diff(all_kp_ids, axis=-1).flatten()
-                    outside = (lengths == 0) | np.isnan(start_points)
+                        # all_kp_ids contains now the start and the end index of the regions within the recorded data, that corresponds to the windows. The ids should fit to the numpy slice interface (i.e. data[start:end+1]). I.e. all bins with with the start index and end index will be summed together.
+                        # np.nan will be filled in for the windows edges of the windows that have not been seen yet. When the start and the end value are the same, then the windows contains no point of the current chunk. This can also be the case, then the window has already been completed.
 
-                    if serial == "DEV3442" and np.any(time_axis <= 0):
-                        print(f"{start_points=}")
-                        print(f"{end_points=}")
+                        start_points = all_kp_ids[:, 0]
+                        end_points = all_kp_ids[:, 1]
+                        lengths = np.diff(all_kp_ids, axis=-1).flatten()
+                        outside = (lengths == 0) | np.isnan(start_points)
 
-                    start_points = start_points[~outside]
-                    end_points = end_points[~outside]
-                    
-                    # extending the windows whose end is not see in this chunk to the end of the chunk.
-                    end_points[np.isnan(end_points)] = len(time_axis)-1
+                        start_points = start_points[~outside]
+                        end_points = end_points[~outside]
+                        
+                        # extending the windows whose end is not see in this chunk to the end of the chunk.
+                        end_points[np.isnan(end_points)] = len(time_axis)-1
 
-                    lengths = (end_points-start_points)
-                    lengths = lengths.astype(int)
-                    start_points = start_points.astype(int)
+                        lengths = (end_points-start_points)
+                        lengths = lengths.astype(int)
+                        start_points = start_points.astype(int)
 
-                    if serial == "DEV3442" and np.any(time_axis <= 0):
-                        print(f"{lengths=}")
-                        print(f"{time_in_ns=}")
+                        # averaging down:
+                        raw_data = []
+                        for c in channel_mapping[k]:
+                            if c == "r":
+                                raw_data.append(np.sqrt(rd["x"]**2+rd["y"]**2))
+                            else:
+                                raw_data.append(rd[c])
+                        raw_data = np.array(raw_data)
+                        selected, count, averaged, out_of_range, output = average_in_windows_numpy(data=raw_data, start=start_points, length=lengths)
 
-                    # averaging down:
-                    raw_data = np.array([rd[c] for c in channels])
-                    selected, count, averaged, out_of_range, output = average_in_windows_numpy(data=raw_data, start=start_points, length=lengths)
+                        mask = ~outside
+                        mask[mask] &= ~out_of_range
 
-                    mask = ~outside
-                    mask[mask] &= ~out_of_range
-                    summed_array[:, mask] += selected
-                    count_array[:, mask] += count
+                        summed_array[k][:, mask] += selected
+                        count_array[k][:, mask] += count
 
-                    # summing together the completed windows
-                    output_array[:, mask] = summed_array[:, mask]/count_array[:, mask]
+                        # summing together the completed windows
+                        output_array[k][:, mask] = summed_array[k][:, mask]/count_array[k][:, mask]
 
                     # finding out if we have covered all points
-                    if time_in_ns[-1] >= windows_edges_ordered[-1]:
+                    if all([time_in_ns[-1] > windows_edges_ordered[k][-1] for k in windows.keys()]):
                         break
 
             time.sleep(0.02)
@@ -379,6 +377,7 @@ def polling_averaging_thread(
     finally:
         api_session.unsubscribe("*")
         running_flag.clear()
+        print(f"completed MFLI {serial} acquisition thread")
 
     return output_array
 
@@ -1192,6 +1191,9 @@ class MFLIPOLL(MFLIDAQ):
         if self.thread is not None and self.thread.is_alive():
             self.thread.join()
 
+        assert not self.running_flag.is_set()
+
+
     def delete_program(self, program_name: str) -> None:
         """Delete program from internal memory."""
 
@@ -1221,50 +1223,22 @@ class MFLIPOLL(MFLIDAQ):
         # obtaining the necessary information from the selected program
         program = self.default_program.merge(self.programs[program_name])
 
-        # the channel that are to be recorded
-        channels = [
-            self.translations[c.lower()] if c.lower() in self.translations else c.lower() 
-            for c in program.required_channels()
-            ]
-
         # which trigger is to be listened for
         trigger = program.trigger_settings.trigger_input
         trigger = self.translations[trigger.lower()] if trigger.lower() in self.translations else trigger
         assert trigger in [None, 0, 1]
 
-        # cleaning up the requested channels to only contain one instance per input and
-        # hacking the "R" output by requesting both X, and Y
-        new_channels = []
-        for c in channels:
-            if c == "r":
-                new_channels.extend(["x", "y"])
-            else:
-                new_channels.append(c)
-        channels = list(tuple(new_channels))
-
-        # which measurement windows are to be recorded
-        window_names = list(program.windows.keys())
-        windows = np.array(list(program.windows.values())) # (<name>, <begin / length>, <n_window>)
-        windows = windows.transpose((1, 0, 2)) # (<begin / length>, <name>, <n_window>)
-        windows = windows.reshape((2, -1)) # (<begin / length>, <name> + <n_window>)
-        windows = windows.T # (<name> + <n_window>, <begin / end>)
-        windows[:, 1] += windows[:, 0] # (<name> + <n_window>, <begin / end>)
-
-        if self.serial == "DEV3442":
-            import pdb; pdb.set_trace()
-
         # calculating a timeout
         timeout = program.get_minimal_duration()+60*1e9
         
-        output_array = np.zeros((len(channels), len(windows)))*np.nan
+        output_array = {k:np.zeros((len(program.channel_mapping[k]), len(w[0])))*np.nan for k, w in program.windows.items()}
         self.current_output_array = output_array
-        self._current_requested_basis = channels
         
-        print("arming MFLI acquisition thread")
-        self.thread = threading.Thread(target=polling_averaging_thread, kwargs=dict(api_session=api_session, serial=serial, channels=channels, trigger=trigger, windows=windows, output_array=output_array, running_flag=self.running_flag, stop_flag=self.stop_flag, timeout=timeout), name=f"{self.serial} polling thread")
+        print(f"arming MFLI {self.serial} acquisition thread")
+        self.thread = threading.Thread(target=polling_averaging_thread, kwargs=dict(api_session=api_session, serial=serial, channel_mapping={k:set([c.lower() for c in v]) for k, v in program.channel_mapping.items()}, trigger=trigger, windows=program.windows, output_array=output_array, running_flag=self.running_flag, stop_flag=self.stop_flag, timeout=timeout), name=f"{self.serial} polling thread")
 
         # starting the acquisition thread
-        print("Starting MFLI acquisition thread")
+        print(f"starting MFLI {self.serial} acquisition thread")
         self.thread.start()
         self._armed_program = program
         self.currently_set_program = program_name
@@ -1285,35 +1259,15 @@ class MFLIPOLL(MFLIDAQ):
         data = self.current_output_array.copy() # (channel, <name> + <n_window>)
 
         # reverting the measurement window transformation
-        channels = self._current_requested_basis
-        window_names = list(self._armed_program.windows.keys())
-        data = data.reshape((len(channels), len(window_names), -1))
-
-        print(f"{self.serial}: {data=}")
-
-        # rebuilding the data to match the requested channels
-        # this contains calculating R from X and Y
-        new_channels = [c.lower() for c in self._armed_program.required_channels()]
-        new_data = []
-        for c in new_channels:
-            if c == "r":
-                assert "x" in channels and "y" in channels
-                id_x, id_y = channels.index('x'), channels.index("y")
-                r = np.sqrt(data[id_x, :, :]**2 + data[id_y, :, :]**2)
-                new_data.append(r)
-            else:
-                assert c in channels
-                index = channels.index(c)
-                new_data.append(data[index, :, :])
-        data = np.array(new_data)
-        channels = new_channels
+        channel_mapping = self._armed_program.channel_mapping
+        window_names = self._armed_program.windows
 
         # packaging the data
         packaged = {}
         for i, n in enumerate(window_names):
             packaged[n] = {}
-            for j, c in enumerate(self._armed_program.channel_mapping[n]):
-                packaged[n][c] = data[j, i]
+            for j, c in enumerate(channel_mapping[n]):
+                packaged[n][c] = data[n][j]
 
         return packaged
         

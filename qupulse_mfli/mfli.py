@@ -216,93 +216,28 @@ def average_in_windows_numpy(data:np.ndarray, start:np.ndarray, length:np.ndarra
 
     return selected, count, averaged, out_of_range, output
 
+def test_average_in_windows_numpy():
+    """ Testing if the average_in_windows_numpy behaves as expected
+    """
 
-# def griddify_ds_reduce_at(ds: Dataset, measurement_prefix: str = "M", additional_holdoff: float = 0.1, sample_parameter_name: str = "qupulse_inst_alazar_samples"):
-#     """Griddify a dataset which includes a 2D grid of measurements.
+    data = np.array([
+        [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2], 
+        [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3], 
+        [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]])
 
-#     The measurements need to be as nx*ny results for the measurement window named measurement_prefix.
+    starts  = np.array([0, 0, 0, 2, 4, 8])
+    lengths = np.array([4, 3, 2, 4, 4, 4])
 
-#     This function then averages each measurement window (Excluding the additional_holdoff
-#     at the start and end) of each window.
+    expected = np.array([
+        [0,     0,   0, 1/2, 1.0, 2.0], 
+        [1/4,   0,   0, 3/4, 1.5, (2+3+3+3)/4], 
+        [1/2, 1/3, 1/2, 1/2, 0.5, 0.5]])
 
-#     Finally the data is gridded into 2D shape with coordinates extracted from
-#     ds.attrs['custom_metadata']['sweeps'].
+    selected, count, averaged, out_of_range, output = average_in_windows_numpy(data=data, start=starts, length=lengths)
 
-#     Args:
-#         ds (xarray.Dataset):
-#             The dataset to grid.
-#         measurement_prefix (str, optional):
-#             The start of the name of the measurements to grid. (default: 'M')
-#         additional_holdoff (float, optional):
-#             Fraction of data to exclude at the start and end of each measurement window.
-#             (default: 0.1)
-#         sample_parameter_name (str, optional):
-#             The name of the time base parameter from which to filter. (default: qupulse_inst_alazar_samples)
+    assert np.allclose(output, expected)
 
-#     Returns:
-#         ds_gridded (xarray.Dataset)
-#         ds_processed (xarray.Dataset, optional)
-#     """
 
-#     custom_metadata = json.loads(ds.attrs["custom_metadata"])
-#     measurements = np.array(json.loads(ds.attrs["measurement_windows"])[0][measurement_prefix])
-#     specs = custom_metadata["sweeps"][measurement_prefix]
-    
-#     nx, ny = specs["nx"], specs["ny"]
-#     x_ranges, y_ranges = specs["x_gate_ranges"], specs["y_gate_ranges"]
-#     x_gates, y_gates = specs["x_gates"], specs["y_gates"]
-
-#     print("relating measurement windows to indices", end="; ", flush=True)
-#     # translating the measurement windows into indices
-#     m_start = measurements[:, 0]
-#     m_length = np.diff(measurements, axis=-1)
-
-#     t = ds.coords[sample_parameter_name].values
-
-#     # searching for the start and end indeces of the measurement windows
-#     all_keypoints = measurements.copy().flatten()
-#     kp_order = np.argsort(all_keypoints)
-#     kp_ordered = all_keypoints[kp_order]
-#     kp_ids = np.ones(len(all_keypoints))*np.nan
-
-#     j = 0
-#     for i, ti in enumerate(t): # for every point in the recorded data
-#         while j<len(kp_ids) and kp_ordered[j] <= ti: # for all keypoints that have a time index smaller or equal to the current point in time
-#             kp_ids[j] = i # save the index of the current point
-#             j += 1 # and go to the next keypoint
-
-#     assert np.all(~np.isnan(kp_ids)), "Somehow some start and end points were not found"
-
-#     # reverting the key point sorting:
-#     all_kp_ids = kp_ids[np.argsort(kp_ordered)].reshape((-1, 2))
-
-#     start_points = all_kp_ids[:, 0].astype(int)
-#     lengths = np.diff(all_kp_ids, axis=-1).flatten().astype(int)
-
-#     # averaging down:
-#     print("averaging", end="; ", flush=True)
-#     raw_data = np.array([ds[variable_name].values  for variable_name in list(ds.data_vars)]).T
-#     downsamples = average_in_windows_numpy(data=raw_data, start=start_points, length=lengths)
-
-#     print("repackaging", end="; ", flush=True)
-#     ds_gridded = Dataset(
-#         {
-#             key: (("y", "x"), downsamples[i].reshape((ny, nx)))
-#             for i, key in enumerate(ds.keys())
-#         },
-#         coords={
-#             f"{gate}_x": ("x", np.linspace(*x_ranges[i], nx))
-#             for i, gate in enumerate(x_gates)
-#         } | {
-#             f"{gate}_y": ("y", np.linspace(*y_ranges[i], ny)
-#             ) for i, gate in enumerate(y_gates)
-#         }
-#     )
-#     ds_gridded.attrs = ds.attrs
-#     ds_gridded.attrs["custom_metadata"] = custom_metadata
-
-#     print("done")
-#     return ds_gridded
 
 def polling_averaging_thread(
     api_session, serial, channels:List[str], trigger:Union[None, int], 
@@ -345,7 +280,7 @@ def polling_averaging_thread(
         clock_base = api_session.getDouble(f'/{serial}/clockbase')
 
         # getting some data to clear the buffer
-        recording_time_s = 0.1 # the size of one chunk in s
+        recording_time_s = 0.0 # the size of one chunk in s that is to be recorded after the function is called. Not polled data should also be returned.
         timeout_ms = 100
         _ = api_session.poll(recording_time_s=recording_time_s, timeout_ms=timeout_ms, flags=0, flat=True)
 
@@ -377,8 +312,10 @@ def polling_averaging_thread(
                         if np.any(trigger_mask):
                             first_index = np.where(trigger_mask)[0][0]
                             timestamp_of_first_trigger_high = time_axis[first_index]
+                            print(f"{serial} received the trigger signal")
 
                 if timestamp_of_first_trigger_high is not None:
+                    time_axis = time_axis.astype(float)
                     time_axis -= timestamp_of_first_trigger_high
                     time_in_ns = time_axis/clock_base*1e9 # the time after the trigger has been received
 
@@ -395,25 +332,37 @@ def polling_averaging_thread(
                     # reverting the key point sorting:
                     all_kp_ids = kp_ids[np.argsort(windows_edges_ordered)].reshape((-1, 2))
 
-                    # all_kp_ids contains now the start and the end index of the regions within the recorded data, that corresponds to the windows. The ids should fit to the numpy slice interface (i.e. data[start:end]).
+                    # all_kp_ids contains now the start and the end index of the regions within the recorded data, that corresponds to the windows. The ids should fit to the numpy slice interface (i.e. data[start:end+1]). I.e. all bins with with the start index and end index will be summed together.
                     # np.nan will be filled in for the windows edges of the windows that have not been seen yet. When the start and the end value are the same, then the windows contains no point of the current chunk. This can also be the case, then the window has already been completed.
 
                     start_points = all_kp_ids[:, 0]
                     end_points = all_kp_ids[:, 1]
                     lengths = np.diff(all_kp_ids, axis=-1).flatten()
+                    outside = (lengths == 0) | np.isnan(start_points)
 
+                    if serial == "DEV3442" and np.any(time_axis <= 0):
+                        print(f"{start_points=}")
+                        print(f"{end_points=}")
+
+                    start_points = start_points[~outside]
+                    end_points = end_points[~outside]
+                    
                     # extending the windows whose end is not see in this chunk to the end of the chunk.
-                    end_points[np.isnan(end_points)] = len(time_axis)
+                    end_points[np.isnan(end_points)] = len(time_axis)-1
 
-                    already_completed = lengths == 0
-                    lengths = (end_points-start_points)[~already_completed].astype(int)
-                    start_points = start_points[~already_completed].astype(int)
+                    lengths = (end_points-start_points)
+                    lengths = lengths.astype(int)
+                    start_points = start_points.astype(int)
+
+                    if serial == "DEV3442" and np.any(time_axis <= 0):
+                        print(f"{lengths=}")
+                        print(f"{time_in_ns=}")
 
                     # averaging down:
                     raw_data = np.array([rd[c] for c in channels])
                     selected, count, averaged, out_of_range, output = average_in_windows_numpy(data=raw_data, start=start_points, length=lengths)
 
-                    mask = ~already_completed
+                    mask = ~outside
                     mask[mask] &= ~out_of_range
                     summed_array[:, mask] += selected
                     count_array[:, mask] += count
@@ -425,9 +374,11 @@ def polling_averaging_thread(
                     if time_in_ns[-1] >= windows_edges_ordered[-1]:
                         break
 
+            time.sleep(0.02)
+
     finally:
-        running_flag.clear()
         api_session.unsubscribe("*")
+        running_flag.clear()
 
     return output_array
 
@@ -510,7 +461,6 @@ class MFLIProgram:
             new_program.operations = other.operations
 
         return new_program
-
 
 class MFLIDAQ(DAC):
     """ This class contains the driver for using the DAQ module of an Zuerich Instruments MFLI with qupulse.
@@ -1181,6 +1131,11 @@ class MFLIPOLL(MFLIDAQ):
         :param reset:             Reset device before initialization
         :param timeout:           Timeout in seconds for uploading
         """
+
+        self.translations = {
+            'demods/0/sample.TrigIn1'.lower(): 0,
+            'demods/0/sample.TrigIn2'.lower(): 1,
+        }
         
         self.name = name
         
@@ -1200,6 +1155,7 @@ class MFLIPOLL(MFLIDAQ):
 
         self.currently_set_program: Optional[str] = None
         self._armed_program: Optional[MFLIProgram] = None
+        self._current_requested_basis : Union[None, list[str]] = None
 
         self.thread = None
         self.running_flag = threading.Event()
@@ -1213,86 +1169,8 @@ class MFLIPOLL(MFLIDAQ):
         zhinst.utils.disable_everything(self.api_session, self.serial)
         self.clear()
         self.programs.clear()
-
-    def arm_program(self, program_name: str) -> None:
-        """ This method will configure the mfli to stream the data to this pc and will start the acquisition thread.
-        """
-
+        self.delete_program()
         self.unarm_program()
-
-        if stop_flag.is_set():
-            stop_flag.clear()
-
-        api_session = self.api_session
-        serial = self.serial
-
-        # obtaining the necessary information from the selected program
-        program = self.default_program.merge(self.programs[program_name])
-
-        # the channel that are to be recorded
-        channels = [c.lower() for c in program.required_channels()]
-
-        # hacking the "R" output by requesting both X, and Y
-        if "r" in channels:
-            raise NotImplementedError('the pull api only knows about the x and y components. R has to be calculated later. This is not yet implemented in this driver')
-            # new_channels = []
-            # for c in channels:
-            #     if c == "r":
-            #         new_channels.extend(["x", "y"])
-            #     else:
-            #         new_channels.append(c)
-            # channels = list(tuple(new_channels))
-
-        # which trigger is to be listened for
-        trigger = program.trigger_settings.trigger_input
-        assert trigger in [None, 0, 1]
-
-        # which measurement windows are to be recorded
-        window_names = list(program.windows.keys())
-        windows = np.array(list(program.windows.values())) # (<name>, <begin / length>, <n_window>)
-        windows = windows.transpose((1, 0, 2)) # (<begin / length>, <name>, <n_window>)
-        windows = windows.reshape((2, -1)) # (<begin / length>, <name> + <n_window>)
-        windows[:, 0] += windows[:, 1] # (<begin / end>, <name> + <n_window>)
-        windows = windows.T # (<name> + <n_window>, <begin / end>)
-
-        # calculating a timeout
-        timeout = program.get_minimal_duration()+60*1e9
-        
-        output_array = np.zeros((len(channels), len(windows)))*np.nan
-        self.current_output_array = output_array
-        
-        self.thread = threading.Thread(target=polling_averaging_thread, kwargs=dict(api_session=api_session, serial=serial, channels=channels, trigger=trigger, windows=windows, output_array=output_array, running_flag=running_flag, stop_flag=stop_flag, timeout=timeout))
-
-        # starting the acquisition thread
-        self.thread.start()
-        self._armed_program = program
-        self.currently_set_program = program_name
-
-    def measure_program(self, timeout:float=np.inf, wait:bool=True) -> Dict[str, Dict[str, List[xr.DataArray]]]:
-
-        # waiting until the pulse is completed
-        if wait:
-            start_time = time.time()
-            while running_flag.is_set() and time.time()-start_time <= timeout:
-                time.sleep(0.1)
-
-        # copying the obtained data
-        data = self.current_output_array.copy() # (channel, <name> + <n_window>)
-
-        # reverting the measurement window transformation
-        channels = len(self._armed_program.required_channels())
-        window_names = list(self._armed_program.windows.keys())
-        data = data.reshape((len(channels), len(window_names), -1))
-
-        # packaging the data
-        packaged = {}
-        for i, n in enumerate(window_names):
-            packaged[n] = {}
-            for j, c in enumerate(channels):
-                packaged[n][c] = data[j, i]
-
-        return packaged
-        
 
     def unarm_program(self):
         """ unarms the lock-in. This should be program independent.
@@ -1301,13 +1179,18 @@ class MFLIPOLL(MFLIDAQ):
         self.stop_acquisition()
 
         self._armed_program = None
+        self._current_requested_basis = None
 
     def stop_acquisition(self):
-        if running_flag.is_set():
+
+        # telling the thread to stop
+        if self.running_flag.is_set() or (self.thread is not None and self.thread.is_alive()):
             print("stopping the currently running program...")
-            stop_flag.set()
-            while running_flag.is_set():
-                time.sleep(0.1)
+            self.stop_flag.set()
+
+        # waiting until the thread terminated
+        if self.thread is not None and self.thread.is_alive():
+            self.thread.join()
 
     def delete_program(self, program_name: str) -> None:
         """Delete program from internal memory."""
@@ -1321,3 +1204,116 @@ class MFLIPOLL(MFLIDAQ):
 
     def clear(self) -> None:
         self.unarm_program()
+
+
+    def arm_program(self, program_name: str) -> None:
+        """ This method will configure the mfli to stream the data to this pc and will start the acquisition thread.
+        """
+
+        self.unarm_program()
+
+        if self.stop_flag.is_set():
+            self.stop_flag.clear()
+
+        api_session = self.api_session
+        serial = self.serial
+
+        # obtaining the necessary information from the selected program
+        program = self.default_program.merge(self.programs[program_name])
+
+        # the channel that are to be recorded
+        channels = [
+            self.translations[c.lower()] if c.lower() in self.translations else c.lower() 
+            for c in program.required_channels()
+            ]
+
+        # which trigger is to be listened for
+        trigger = program.trigger_settings.trigger_input
+        trigger = self.translations[trigger.lower()] if trigger.lower() in self.translations else trigger
+        assert trigger in [None, 0, 1]
+
+        # cleaning up the requested channels to only contain one instance per input and
+        # hacking the "R" output by requesting both X, and Y
+        new_channels = []
+        for c in channels:
+            if c == "r":
+                new_channels.extend(["x", "y"])
+            else:
+                new_channels.append(c)
+        channels = list(tuple(new_channels))
+
+        # which measurement windows are to be recorded
+        window_names = list(program.windows.keys())
+        windows = np.array(list(program.windows.values())) # (<name>, <begin / length>, <n_window>)
+        windows = windows.transpose((1, 0, 2)) # (<begin / length>, <name>, <n_window>)
+        windows = windows.reshape((2, -1)) # (<begin / length>, <name> + <n_window>)
+        windows = windows.T # (<name> + <n_window>, <begin / end>)
+        windows[:, 1] += windows[:, 0] # (<name> + <n_window>, <begin / end>)
+
+        if self.serial == "DEV3442":
+            import pdb; pdb.set_trace()
+
+        # calculating a timeout
+        timeout = program.get_minimal_duration()+60*1e9
+        
+        output_array = np.zeros((len(channels), len(windows)))*np.nan
+        self.current_output_array = output_array
+        self._current_requested_basis = channels
+        
+        print("arming MFLI acquisition thread")
+        self.thread = threading.Thread(target=polling_averaging_thread, kwargs=dict(api_session=api_session, serial=serial, channels=channels, trigger=trigger, windows=windows, output_array=output_array, running_flag=self.running_flag, stop_flag=self.stop_flag, timeout=timeout), name=f"{self.serial} polling thread")
+
+        # starting the acquisition thread
+        print("Starting MFLI acquisition thread")
+        self.thread.start()
+        self._armed_program = program
+        self.currently_set_program = program_name
+
+        # waiting until the acquisition loop is running
+        while not self.running_flag.is_set():
+            time.sleep(0.01)
+
+    def measure_program(self, timeout:float=np.inf, wait:bool=True) -> Dict[str, Dict[str, List[xr.DataArray]]]:
+
+        # waiting until the pulse is completed
+        if wait:
+            start_time = time.time()
+            while self.running_flag.is_set() and time.time()-start_time <= timeout:
+                time.sleep(0.1)
+
+        # copying the obtained data
+        data = self.current_output_array.copy() # (channel, <name> + <n_window>)
+
+        # reverting the measurement window transformation
+        channels = self._current_requested_basis
+        window_names = list(self._armed_program.windows.keys())
+        data = data.reshape((len(channels), len(window_names), -1))
+
+        print(f"{self.serial}: {data=}")
+
+        # rebuilding the data to match the requested channels
+        # this contains calculating R from X and Y
+        new_channels = [c.lower() for c in self._armed_program.required_channels()]
+        new_data = []
+        for c in new_channels:
+            if c == "r":
+                assert "x" in channels and "y" in channels
+                id_x, id_y = channels.index('x'), channels.index("y")
+                r = np.sqrt(data[id_x, :, :]**2 + data[id_y, :, :]**2)
+                new_data.append(r)
+            else:
+                assert c in channels
+                index = channels.index(c)
+                new_data.append(data[index, :, :])
+        data = np.array(new_data)
+        channels = new_channels
+
+        # packaging the data
+        packaged = {}
+        for i, n in enumerate(window_names):
+            packaged[n] = {}
+            for j, c in enumerate(self._armed_program.channel_mapping[n]):
+                packaged[n][c] = data[j, i]
+
+        return packaged
+        

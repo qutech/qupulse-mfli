@@ -242,7 +242,7 @@ def test_average_in_windows_numpy():
 def polling_averaging_thread(
     api_session, serial, channel_mapping:Dict[str, Set[str]], trigger:Union[None, int], 
     windows:Dict[str, List[np.ndarray]], output_array:Dict[str, np.ndarray], 
-    running_flag:threading.Event, stop_flag:threading.Event, timeout=np.inf,):
+    running_flag:threading.Event, stop_flag:threading.Event, timeout:float):
     """ This thread polls data and averages it into the specified windows
 
     to measure the demodulated signal, the node "/dev3869/demods/0/sample" might be subscribed to.
@@ -280,6 +280,7 @@ def polling_averaging_thread(
         recording_time_s = 0.0 # the size of one chunk in s that is to be recorded after the function is called. Not polled data should also be returned.
         timeout_ms = 100
         _ = api_session.poll(recording_time_s=recording_time_s, timeout_ms=timeout_ms, flags=0, flat=True)
+        timeout_ms = 1000
 
         # announcing that the loop is now measuring
         running_flag.set()
@@ -309,6 +310,7 @@ def polling_averaging_thread(
                         if np.any(trigger_mask):
                             first_index = np.where(trigger_mask)[0][0]
                             timestamp_of_first_trigger_high = time_axis[first_index]
+                            start_time = time.time()
                             print(f"{serial} received the trigger signal")
 
                 if timestamp_of_first_trigger_high is not None:
@@ -1231,7 +1233,10 @@ class MFLIPOLL(MFLIDAQ):
         # calculating a timeout
         timeout = program.get_minimal_duration()+60*1e9
         
-        output_array = {k:np.zeros((len(program.channel_mapping[k]), len(w[0])))*np.nan for k, w in program.windows.items()}
+        output_array = {
+            k:np.zeros((len(program.channel_mapping[k]), len(w[0])))*np.nan 
+            for k, w in program.windows.items()
+            }
         self.current_output_array = output_array
         
         print(f"arming MFLI {self.serial} acquisition thread")

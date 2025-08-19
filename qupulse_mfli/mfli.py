@@ -109,7 +109,7 @@ def postprocessing_crop_windows(
             applicable_data = recorded_data[cn][-1 - shot_index]
             applicable_data = applicable_data.where(~np.isnan(applicable_data), drop=True)
 
-            if len(applicable_data) == 0 or np.product([*applicable_data.shape]) == 0:
+            if len(applicable_data) == 0 or np.prod([*applicable_data.shape]) == 0:
                 if fail_on_empty:
                     raise ValueError(f"The received data for channel {_cn} is empty.")
                 else:
@@ -127,7 +127,7 @@ def postprocessing_crop_windows(
                 extracted_data = []
                 applicable_row = applicable_data.loc[{"row":r}]
 
-                assert np.product(applicable_row["time"].shape) == applicable_row["time"].shape[-1], "There might have been multiple rows recorded."
+                assert np.prod(applicable_row["time"].shape) == applicable_row["time"].shape[-1], "There might have been multiple rows recorded."
                 timeaxis = applicable_row["time"].values.squeeze()
                 assert len(timeaxis.shape) == 1
                 dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)
@@ -175,8 +175,6 @@ def postprocessing_average_within_windows(
                 program = program,
                 fail_on_empty = fail_on_empty, 
                 average_window = True)
-
-
 def average_in_windows_numpy(data:np.ndarray, start:np.ndarray, length:np.ndarray) -> np.ndarray:
     """ 
     This function can be used to average measurement windows. This function uses a low level numpy function. The code has been copied from qupulse-mfli.
@@ -402,6 +400,9 @@ class ThreadSafeAPISession:
                 # Plain data attribute/property read
                 return attr
 
+
+
+
 @dataclasses.dataclass
 class MFLIProgram:
     default_channels: Optional[Set[str]] = dataclasses.field(default=None)
@@ -481,6 +482,50 @@ class MFLIProgram:
 
         return new_program
 
+class ApiSessionInterceptor:
+    def __init__(self, session: zhinst_core.ziDAQServer):
+        self._session = session
+        self.last_values = {}  # Stores the most recent value for each path
+        self._to_gather = set()
+        
+    def __getattr__(self, name):
+        # Get the original attribute from the session
+        orig_attr = getattr(self._session, name)
+        
+        # Intercept callable attributes that start with "set"
+        if callable(orig_attr) and name.startswith("set"):
+            def hooked(*args, **kwargs):
+                if name == "set":
+                    # Expect the first argument to be a list of (path, value) tuples
+                    for pair in args[0]:
+                        path, value = pair
+                        self.last_values[path] = value
+                        self._to_gather.add((name.replace('set','get'),path))
+                else:
+                    # For other set methods (e.g., setInt, setString, etc.)
+                    if len(args) >= 2:
+                        path, value = args[0], args[1]
+                        self.last_values[path] = value
+                        self._to_gather.add((name.replace('set','get'),path))
+                # Delegate the call to the original method
+                return orig_attr(*args, **kwargs)
+            return hooked
+
+        # If it's not a callable "set" method, return the attribute directly.
+        return orig_attr
+    
+    def _gather_known(self) -> Dict[str,Any]:
+        
+        gathered = {}
+        for attr,path in self._to_gather:
+            try:
+                gathered[path] = getattr(self._session,attr)(path)
+            except Exception as e:
+                gathered[path] = repr(e)
+                
+        return gathered
+    
+
 class MFLIDAQ(DAC):
     """ This class contains the driver for using the DAQ module of an Zuerich Instruments MFLI with qupulse.
     """
@@ -490,15 +535,23 @@ class MFLIDAQ(DAC):
                  device_props: Dict,
                  name: str = 'Lockin',
                  reset: bool = False,
-                 timeout: float = 20) -> None:
+                 timeout: float = 20,
+                 save_recent_state: bool = True) -> None:
         """
         :param reset:             Reset device before initialization
         :param timeout:           Timeout in seconds for uploading
         """
         
         self.name = name
+
+
+
+
         
-        self.api_session = ThreadSafeAPISession(api_session)
+self.api_session = ThreadSafeAPISession(api_session)
+self._save_recent_state = save_recent_state
+        if self._save_recent_state:
+            self.api_session = ApiSessionInterceptor(self.api_session)
         self.device_props = device_props
         self.default_timeout = timeout
         self.serial = device_props["deviceid"]
@@ -558,7 +611,19 @@ class MFLIDAQ(DAC):
         self.daq.finish()
         self.daq.clear()
         self._init_daq_module()
-
+    
+    @property
+    def recent_sent_state(self) -> Dict[str,Any]:
+        if self._save_recent_state:
+            return self.api_session.last_values
+        return {}
+    
+    @property
+    def recent_read_state(self) -> Dict[str,Any]:
+        if self._save_recent_state:
+            return self.api_session._gather_known()
+        return {}
+    
     def register_measurement_channel(self, program_name: Union[str, None] = None, window_name: str = None,
                                      channel_path: Union[str, Sequence[str]] = ()):
         """ This function saves the channel one wants to record with a certain program
@@ -1135,162 +1200,3 @@ class MFLIDAQ(DAC):
                                                               Dict[str, Dict[str, List[xr.DataArray]]],
                                                               None]:
         return self.get_mfli_data(wait, timeout, wait_time, return_raw, fail_if_incomplete, fail_on_empty)
-
-class MFLIPOLL(MFLIDAQ):
-    """ This class contains the driver for using the poll method of an Zuerich Instruments MFLI with qupulse.
-    """
-
-    def __init__(self,
-                 api_session: zhinst_core.ziDAQServer,
-                 device_props: Dict,
-                 name: str = 'Lockin',
-                 reset: bool = False,
-                 timeout: float = 20) -> None:
-        """
-        :param reset:             Reset device before initialization
-        :param timeout:           Timeout in seconds for uploading
-        """
-
-        self.translations = {
-            'demods/0/sample.TrigIn1'.lower(): 0,
-            'demods/0/sample.TrigIn2'.lower(): 1,
-        }
-        
-        self.name = name
-        
-        self.api_session = ThreadSafeAPISession(api_session)
-        self.device_props = device_props
-        self.default_timeout = timeout
-        self.serial = device_props["deviceid"]
-
-        self.assumed_minimal_sample_rate: Union[float, None] = None  # in units of Sa/s
-
-        if reset:
-            # Create a base configuration: Disable all available outputs, awgs, demods, scopes,...
-            zhinst.utils.disable_everything(self.api_session, self.serial)
-
-        self.default_program = MFLIProgram()
-        self.programs: Dict[str, MFLIProgram] = {}
-
-        self.currently_set_program: Optional[str] = None
-        self._armed_program: Optional[MFLIProgram] = None
-        self._current_requested_basis : Union[None, list[str]] = None
-
-        self.thread = None
-        self.running_flag = threading.Event()
-        self.stop_flag = threading.Event()
-        self.current_output_array = None
-
-    def reset(self):
-        """ This function resets the device to a known default configuration.
-        """
-
-        zhinst.utils.disable_everything(self.api_session, self.serial)
-        self.clear()
-        self.programs.clear()
-        self.delete_program()
-        self.unarm_program()
-
-    def unarm_program(self):
-        """ unarms the lock-in. This should be program independent.
-        """
-
-        self.stop_acquisition()
-
-        self._armed_program = None
-        self._current_requested_basis = None
-
-    def stop_acquisition(self):
-
-        # telling the thread to stop
-        if self.running_flag.is_set() or (self.thread is not None and self.thread.is_alive()):
-            print("stopping the currently running program...")
-            self.stop_flag.set()
-
-        # waiting until the thread terminated
-        if self.thread is not None and self.thread.is_alive():
-            self.thread.join()
-
-        self.running_flag.clear()
-
-
-    def delete_program(self, program_name: str) -> None:
-        """Delete program from internal memory."""
-
-        # this does not have an effect on the current implementation of the lock-in driver.
-
-        if self.currently_set_program == program_name:
-            self.unarm_program()
-
-        self.programs.pop(program_name)
-
-    def clear(self) -> None:
-        self.unarm_program()
-
-
-    def arm_program(self, program_name: str) -> None:
-        """ This method will configure the mfli to stream the data to this pc and will start the acquisition thread.
-        """
-
-        self.unarm_program()
-
-        if self.stop_flag.is_set():
-            self.stop_flag.clear()
-
-        api_session = self.api_session
-        serial = self.serial
-
-        # obtaining the necessary information from the selected program
-        program = self.default_program.merge(self.programs[program_name])
-
-        # which trigger is to be listened for
-        trigger = program.trigger_settings.trigger_input
-        trigger = self.translations[trigger.lower()] if trigger.lower() in self.translations else trigger
-        assert trigger in [None, 0, 1]
-
-        # calculating a timeout
-        timeout = program.get_minimal_duration()+60*1e9
-        
-        output_array = {
-            k:np.zeros((len(program.channel_mapping[k]), len(w[0])))*np.nan 
-            for k, w in program.windows.items()
-            }
-        self.current_output_array = output_array
-        
-        print(f"arming MFLI {self.serial} acquisition thread")
-        self.thread = threading.Thread(target=polling_averaging_thread, kwargs=dict(api_session=api_session, serial=serial, channel_mapping={k:set([c.lower() for c in v]) for k, v in program.channel_mapping.items()}, trigger=trigger, windows=program.windows, output_array=output_array, running_flag=self.running_flag, stop_flag=self.stop_flag, timeout=timeout), name=f"{self.serial} polling thread")
-
-        # starting the acquisition thread
-        print(f"starting MFLI {self.serial} acquisition thread")
-        self.thread.start()
-        self._armed_program = program
-        self.currently_set_program = program_name
-
-        # waiting until the acquisition loop is running
-        while not self.running_flag.is_set():
-            time.sleep(0.01)
-
-    def measure_program(self, timeout:float=np.inf, wait:bool=True) -> Dict[str, Dict[str, List[xr.DataArray]]]:
-
-        # waiting until the pulse is completed
-        if wait:
-            start_time = time.time()
-            while self.running_flag.is_set() and time.time()-start_time <= timeout:
-                time.sleep(0.1)
-
-        # copying the obtained data
-        data = self.current_output_array.copy() # (channel, <name> + <n_window>)
-
-        # reverting the measurement window transformation
-        channel_mapping = self._armed_program.channel_mapping
-        window_names = self._armed_program.windows
-
-        # packaging the data
-        packaged = {}
-        for i, n in enumerate(window_names):
-            packaged[n] = {}
-            for j, c in enumerate(channel_mapping[n]):
-                packaged[n][c] = data[n][j]
-
-        return packaged
-        

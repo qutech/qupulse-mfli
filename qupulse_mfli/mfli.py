@@ -8,6 +8,7 @@ import logging
 import time
 import traceback
 import threading
+import functools
 import warnings
 from typing import Dict, Tuple, Iterable, Union, List, Set, Any, Sequence, Mapping, Optional, Literal
 
@@ -238,7 +239,6 @@ def test_average_in_windows_numpy():
     assert np.allclose(output, expected)
 
 
-
 def polling_averaging_thread(
     api_session, serial, channel_mapping:Dict[str, Set[str]], trigger:Union[None, int], 
     windows:Dict[str, List[np.ndarray]], output_array:Dict[str, np.ndarray], 
@@ -278,9 +278,8 @@ def polling_averaging_thread(
 
         # getting some data to clear the buffer
         recording_time_s = 0.0 # the size of one chunk in s that is to be recorded after the function is called. Not polled data should also be returned.
-        timeout_ms = 100
-        _ = api_session.poll(recording_time_s=recording_time_s, timeout_ms=timeout_ms, flags=0, flat=True)
         timeout_ms = 1000
+        _ = api_session.poll(recording_time_s=recording_time_s, timeout_ms=timeout_ms, flags=0, flat=True)
 
         # announcing that the loop is now measuring
         running_flag.set()
@@ -374,8 +373,6 @@ def polling_averaging_thread(
                     if all([time_in_ns[-1] > windows_edges_ordered[k][-1] for k in windows.keys()]):
                         break
 
-            time.sleep(0.02)
-
     finally:
         api_session.unsubscribe("*")
         running_flag.clear()
@@ -383,6 +380,27 @@ def polling_averaging_thread(
 
     return output_array
 
+class ThreadSafeAPISession:
+
+    def __init__(self, api_session):
+        self._api_session = api_session
+        self._lock = threading.RLock()
+
+    def __getattr__(self, name):
+        with self._lock:
+            attr = getattr(self._api_session, name)
+
+            if callable(attr):
+                # Bind a locked wrapper around the callable
+                @functools.wraps(attr)
+                def _locked(*args, **kwargs):
+                    # Re-enter is fine (RLock); safe if method calls other methods
+                    with self._lock:
+                        return attr(*args, **kwargs)
+                return _locked
+            else:
+                # Plain data attribute/property read
+                return attr
 
 @dataclasses.dataclass
 class MFLIProgram:
@@ -480,7 +498,7 @@ class MFLIDAQ(DAC):
         
         self.name = name
         
-        self.api_session = api_session
+        self.api_session = ThreadSafeAPISession(api_session)
         self.device_props = device_props
         self.default_timeout = timeout
         self.serial = device_props["deviceid"]
@@ -1140,7 +1158,7 @@ class MFLIPOLL(MFLIDAQ):
         
         self.name = name
         
-        self.api_session = api_session
+        self.api_session = ThreadSafeAPISession(api_session)
         self.device_props = device_props
         self.default_timeout = timeout
         self.serial = device_props["deviceid"]
@@ -1193,7 +1211,7 @@ class MFLIPOLL(MFLIDAQ):
         if self.thread is not None and self.thread.is_alive():
             self.thread.join()
 
-        assert not self.running_flag.is_set()
+        self.running_flag.clear()
 
 
     def delete_program(self, program_name: str) -> None:

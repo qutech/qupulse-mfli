@@ -1206,7 +1206,7 @@ class MFLIPOLL(MFLIDAQ):
                  name: str = 'Lockin',
                  reset: bool = False,
                  timeout: float = 20,
-                 save_recent_state:bool = True) -> None:
+                 save_recent_state:bool = False) -> None:
         """
         :param reset:             Reset device before initialization
         :param timeout:           Timeout in seconds for uploading
@@ -1219,10 +1219,11 @@ class MFLIPOLL(MFLIDAQ):
         
         self.name = name
         
-        self.api_session = ThreadSafeAPISession(api_session)
+        self.api_session = api_session
         self._save_recent_state = save_recent_state
         if self._save_recent_state:
             self.api_session = ApiSessionInterceptor(self.api_session)
+        self.api_session = ThreadSafeAPISession(self.api_session)
         self.device_props = device_props
         self.default_timeout = timeout
         self.serial = device_props["deviceid"]
@@ -1268,7 +1269,7 @@ class MFLIPOLL(MFLIDAQ):
 
         # telling the thread to stop
         if self.running_flag.is_set() or (self.thread is not None and self.thread.is_alive()):
-            print("stopping the currently running program...")
+            print(f"stopping MFLI {self.serial} currently running program")
             self.stop_flag.set()
 
         # waiting until the thread terminated

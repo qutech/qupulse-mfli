@@ -289,7 +289,6 @@ def polling_averaging_thread(
         windows_edges_order = {k:np.argsort(e) for k, e in windows_edges.items()}
         windows_edges_ordered = {k:windows_edges[k][e] for k, e in windows_edges_order.items()}
         windows_edges_order_order = {k:np.argsort(o) for k, o in windows_edges_order.items()}
-        # import pdb; pdb.set_trace()
 
         while not stop_flag.is_set() and time.time()-start_time <= timeout:
             polled_data = api_session.poll(recording_time_s=recording_time_s, timeout_ms=timeout_ms, flags=0, flat=True)

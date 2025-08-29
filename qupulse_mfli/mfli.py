@@ -257,15 +257,8 @@ def polling_averaging_thread(
     assert trigger in [None, 0, 1]
     assert all([c in ["r", "x", "y", "frequency", "phase", "dio", "trigger", "auxin0", "auxin1"] for cg in channel_mapping.values() for c in cg])
 
-    summed_array = {k:np.zeros(output_array[k].shape).astype(float) for k in windows.keys()}
-    count_array = {k:np.zeros(output_array[k].shape).astype(float) for k in windows.keys()}
     timestamp_of_first_trigger_high = None
 
-    # sorting the measurement windows
-    # we are looking for the index of the start and the end time for each window
-    windows_edges = {k:np.array([v[0], v[0]+v[1]]).T.flatten() for k, v in windows.items()}
-    windows_edges_order = {k:np.argsort(e) for k, e in windows_edges.items()}
-    windows_edges_ordered = {k:windows_edges[k][e] for k, e in windows_edges_order.items()}
 
     try:
         # subscribing to the node
@@ -282,6 +275,21 @@ def polling_averaging_thread(
         # announcing that the loop is now measuring
         running_flag.set()
         start_time = time.time()
+
+        # as we have already subscribe to the corresponding channels, we should already be measuring.
+        # this gives us some time to prepare the output fields and sort the measurement windows
+
+        # preparing some temporary counting fields
+        summed_array = {k:np.zeros(output_array[k].shape).astype(float) for k in windows.keys()}
+        count_array = {k:np.zeros(output_array[k].shape).astype(float) for k in windows.keys()} 
+
+        # sorting the measurement windows
+        # we are looking for the index of the start and the end time for each window
+        windows_edges = {k:np.array([v[0], v[0]+v[1]]).T.flatten() for k, v in windows.items()}
+        windows_edges_order = {k:np.argsort(e) for k, e in windows_edges.items()}
+        windows_edges_ordered = {k:windows_edges[k][e] for k, e in windows_edges_order.items()}
+        windows_edges_order_order = {k:np.argsort(o) for k, o in windows_edges_order.items()}
+        # import pdb; pdb.set_trace()
 
         while not stop_flag.is_set() and time.time()-start_time <= timeout:
             polled_data = api_session.poll(recording_time_s=recording_time_s, timeout_ms=timeout_ms, flags=0, flat=True)
@@ -328,7 +336,7 @@ def polling_averaging_thread(
                                 j += 1 # and go to the next keypoint
 
                         # reverting the key point sorting:
-                        all_kp_ids = kp_ids[np.argsort(windows_edges_ordered[k])].reshape((-1, 2))
+                        all_kp_ids = kp_ids[windows_edges_order_order[k]].reshape((-1, 2))
 
                         # all_kp_ids contains now the start and the end index of the regions within the recorded data, that corresponds to the windows. The ids should fit to the numpy slice interface (i.e. data[start:end+1]). I.e. all bins with with the start index and end index will be summed together.
                         # np.nan will be filled in for the windows edges of the windows that have not been seen yet. When the start and the end value are the same, then the windows contains no point of the current chunk. This can also be the case, then the window has already been completed.

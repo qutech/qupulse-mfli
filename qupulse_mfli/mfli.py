@@ -1350,9 +1350,6 @@ class MFLIPOLL(MFLIDAQ):
             while self.running_flag.is_set() and time.time()-start_time <= timeout:
                 time.sleep(0.1)
 
-        # copying the obtained data
-        data = self.current_output_array.copy() # (channel, <name> + <n_window>)
-
         # reverting the measurement window transformation
         channel_mapping = self._armed_program.channel_mapping
         window_names = self._armed_program.windows
@@ -1362,6 +1359,6 @@ class MFLIPOLL(MFLIDAQ):
         for i, n in enumerate(window_names):
             packaged[n] = {}
             for j, c in enumerate(channel_mapping[n]):
-                packaged[n][c] = data[n][j]
+                packaged[n][c] = self.current_output_array[n][j]
 
         return packaged

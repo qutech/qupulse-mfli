@@ -1285,7 +1285,6 @@ class MFLIPOLL(MFLIDAQ):
 
         self.running_flag.clear()
 
-
     def delete_program(self, program_name: str) -> None:
         """Delete program from internal memory."""
 
@@ -1298,6 +1297,22 @@ class MFLIPOLL(MFLIDAQ):
 
     def clear(self) -> None:
         self.unarm_program()
+
+    def _translate_channel_mapping(self, channel_mapping:Dict[str, Set[str]]):
+        """ This function translates the names of the channels from e.g. ```demods/0/sample.R``` to the ones used in the sample node
+        """
+
+        new_channel_mapping = {}
+        for cn, cg in channel_mapping.items():
+            new_set = []
+            for c in cg:
+                if any(s in c for s in ["/", "sample", "."]):
+                    nc = c.split('sample')[1].split(".")[1]
+                    new_set.append(nc.lower())
+                else:
+                    new_set.append(c.lower())
+            new_channel_mapping[cn] = set(new_set)
+        return new_channel_mapping
 
 
     def arm_program(self, program_name: str) -> None:
@@ -1330,7 +1345,7 @@ class MFLIPOLL(MFLIDAQ):
         self.current_output_array = output_array
         
         print(f"arming MFLI {self.serial} acquisition thread")
-        self.thread = threading.Thread(target=polling_averaging_thread, kwargs=dict(api_session=api_session, serial=serial, channel_mapping={k:set([c.lower() for c in v]) for k, v in program.channel_mapping.items()}, trigger=trigger, windows=program.windows, output_array=output_array, running_flag=self.running_flag, stop_flag=self.stop_flag, timeout=timeout), name=f"{self.serial} polling thread")
+        self.thread = threading.Thread(target=polling_averaging_thread, kwargs=dict(api_session=api_session, serial=serial, channel_mapping=self._translate_channel_mapping(program.channel_mapping), trigger=trigger, windows=program.windows, output_array=output_array, running_flag=self.running_flag, stop_flag=self.stop_flag, timeout=timeout), name=f"{self.serial} polling thread")
 
         # starting the acquisition thread
         print(f"starting MFLI {self.serial} acquisition thread")

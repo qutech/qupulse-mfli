@@ -268,7 +268,8 @@ def polling_averaging_thread(
         clock_base = api_session.getDouble(f'/{serial}/clockbase')
 
         # getting some data to clear the buffer
-        recording_time_s = 0.0 # the size of one chunk in s that is to be recorded after the function is called. Not polled data should also be returned.
+        recording_time_s = 0.001 # the size of one chunk in s that is to be recorded after the function is called. Not polled data should also be returned. 
+        # things become unstable for recording times below 1ms!
         timeout_ms = 1000
         _ = api_session.poll(recording_time_s=recording_time_s, timeout_ms=timeout_ms, flags=0, flat=True)
 

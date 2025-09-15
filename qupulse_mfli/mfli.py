@@ -379,6 +379,8 @@ def polling_averaging_thread(
                     if all([time_in_ns[-1] > windows_edges_ordered[k][-1] for k in windows.keys()]):
                         break
 
+            # time.sleep(recording_time_s)
+
     finally:
         api_session.unsubscribe("*")
         running_flag.clear()
@@ -500,19 +502,23 @@ class ApiSessionInterceptor:
         
         # Intercept callable attributes that start with "set"
         if callable(orig_attr) and name.startswith("set"):
+            @functools.wraps(orig_attr)
             def hooked(*args, **kwargs):
-                if name == "set":
+
+                if isinstance(args, list):
                     # Expect the first argument to be a list of (path, value) tuples
-                    for pair in args[0]:
-                        path, value = pair
-                        self.last_values[path] = value
-                        self._to_gather.add((name.replace('set','get'),path))
+                    # this is the case for the bulk set command
+                    args_to_parse = args[0]
                 else:
-                    # For other set methods (e.g., setInt, setString, etc.)
-                    if len(args) >= 2:
-                        path, value = args[0], args[1]
-                        self.last_values[path] = value
-                        self._to_gather.add((name.replace('set','get'),path))
+                    # this is the case for a call of the set command with only one path and value to update
+                    assert isinstance(args, tuple) and len(args) == 2
+                    args_to_parse = [args]
+
+                for pair in args_to_parse:
+                    path, value = pair
+                    self.last_values[path] = value
+                    self._to_gather.add((name.replace('set','get'),path))
+
                 # Delegate the call to the original method
                 return orig_attr(*args, **kwargs)
             return hooked
@@ -550,10 +556,11 @@ class MFLIDAQ(DAC):
         
         self.name = name
 
-        self.api_session = ThreadSafeAPISession(api_session)
         self._save_recent_state = save_recent_state
+        self.api_session = api_session
         if self._save_recent_state:
             self.api_session = ApiSessionInterceptor(self.api_session)
+        self.api_session = ThreadSafeAPISession(self.api_session)
         self.device_props = device_props
         self.default_timeout = timeout
         self.serial = device_props["deviceid"]
@@ -1214,7 +1221,7 @@ class MFLIPOLL(MFLIDAQ):
                  name: str = 'Lockin',
                  reset: bool = False,
                  timeout: float = 20,
-                 save_recent_state:bool = False) -> None:
+                 save_recent_state:bool = True) -> None:
         """
         :param reset:             Reset device before initialization
         :param timeout:           Timeout in seconds for uploading
@@ -1227,8 +1234,8 @@ class MFLIPOLL(MFLIDAQ):
         
         self.name = name
         
-        self.api_session = api_session
         self._save_recent_state = save_recent_state
+        self.api_session = api_session
         if self._save_recent_state:
             self.api_session = ApiSessionInterceptor(self.api_session)
         self.api_session = ThreadSafeAPISession(self.api_session)

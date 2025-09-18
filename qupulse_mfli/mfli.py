@@ -268,7 +268,7 @@ def polling_averaging_thread(
         clock_base = api_session.getDouble(f'/{serial}/clockbase')
 
         # getting some data to clear the buffer
-        recording_time_s = 0.010 # the size of one chunk in s that is to be recorded after the function is called. Not polled data should also be returned. 
+        recording_time_s = 0.020 # the size of one chunk in s that is to be recorded after the function is called. Not polled data should also be returned. 
         # things become unstable for recording times below 1ms and over long durations 1ms is not quite stable!
         timeout_ms = 1000
         _ = api_session.poll(recording_time_s=recording_time_s, timeout_ms=timeout_ms, flags=0, flat=True)
@@ -379,10 +379,29 @@ def polling_averaging_thread(
                     if all([time_in_ns[-1] > windows_edges_ordered[k][-1] for k in windows.keys()]):
                         break
 
-            # time.sleep(recording_time_s)
+            time.sleep(recording_time_s/2)
 
     finally:
         api_session.unsubscribe("*")
+
+        # checking if the recording was successful by counting the points that were averaged into each point
+        sample_rate = api_session.getDouble(f"/{serial}/demods/0/rate") # Sample/s
+        all_there = {}
+        expected_sample = {}
+        missing_sample = {}
+        for k, (s, l) in windows.items():
+            expected_sample[k] = l*1e-9*sample_rate
+            all_there[k] = np.allclose(expected_sample[k], count_array[k], rtol=0.005)
+            missing_sample[k] = np.maximum(0, expected_sample[k]-count_array[k])
+
+        if not all(all_there.values()):
+            print("!"*20)
+            print(f"{serial} Some measurement windows received all samples:")
+            print(f"{np.sum(expected_sample)=}")
+            print(f"{np.sum(missing_sample)=}")
+            print("!"*20)
+
+
         running_flag.clear()
         print(f"completed MFLI {serial} acquisition thread")
 

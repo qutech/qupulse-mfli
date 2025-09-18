@@ -175,6 +175,7 @@ def postprocessing_average_within_windows(
                 program = program,
                 fail_on_empty = fail_on_empty, 
                 average_window = True)
+
 def average_in_windows_numpy(data:np.ndarray, start:np.ndarray, length:np.ndarray) -> np.ndarray:
     """ 
     This function can be used to average measurement windows. This function uses a low level numpy function. The code has been copied from qupulse-mfli.
@@ -186,8 +187,8 @@ def average_in_windows_numpy(data:np.ndarray, start:np.ndarray, length:np.ndarra
     # finding out which indices are not within the recorded data
     end = start+length
     begin_index_below, end_index_below = (start<0), (end<0)
-    begin_above_below, end_above_below = (start>=data.shape[-1]), (end>data.shape[-1])
-    out_of_range = begin_index_below|end_index_below|begin_above_below|end_above_below
+    begin_index_above, end_index_above = (start>=data.shape[-1]), (end>data.shape[-1])
+    out_of_range = begin_index_below|end_index_below|begin_index_above|end_index_above
 
     # now we can remove the bins that are not within the range
     start, end = start[~out_of_range], end[~out_of_range]
@@ -197,7 +198,7 @@ def average_in_windows_numpy(data:np.ndarray, start:np.ndarray, length:np.ndarra
 
     # adding one last element to the data and indices, such that the last element also works.
     data_to_reduce = np.concatenate([data, np.full((*data.shape[:-1], 1), np.nan)], axis=-1)
-    indices_to_reduce = np.concatenate([reduce_indices, [len(data)]])
+    indices_to_reduce = np.concatenate([reduce_indices, [data.shape[-1]]])
 
     # calling the reduce at
     all_summed = np.add.reduceat(data_to_reduce, indices_to_reduce, axis=-1)[..., :-1]
@@ -350,7 +351,7 @@ def polling_averaging_thread(
                         end_points = end_points[~outside]
                         
                         # extending the windows whose end is not see in this chunk to the end of the chunk.
-                        end_points[np.isnan(end_points)] = len(time_axis)-1
+                        end_points[np.isnan(end_points)] = len(time_axis)
 
                         lengths = (end_points-start_points)
                         lengths = lengths.astype(int)
@@ -391,14 +392,14 @@ def polling_averaging_thread(
         missing_sample = {}
         for k, (s, l) in windows.items():
             expected_sample[k] = l*1e-9*sample_rate
-            all_there[k] = np.allclose(expected_sample[k], count_array[k], rtol=0.005)
-            missing_sample[k] = np.maximum(0, expected_sample[k]-count_array[k])
+            all_there[k] = np.allclose(expected_sample[k], count_array[k], atol=1, rtol=0.005)
+            missing_sample[k] = expected_sample[k]-count_array[k]
 
         if not all(all_there.values()):
             print("!"*20)
             print(f"{serial} Some measurement windows received all samples:")
-            print(f"{np.sum(expected_sample)=}")
-            print(f"{np.sum(missing_sample)=}")
+            print(f"{np.sum(np.array([v for v in expected_sample.values()]))=}")
+            print(f"{np.sum(np.abs(np.array([v for v in missing_sample.values()])))=}")
             print("!"*20)
 
 

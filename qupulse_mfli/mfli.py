@@ -396,11 +396,13 @@ def polling_averaging_thread(
             missing_sample[k] = expected_sample[k]-count_array[k]
 
         if not all(all_there.values()):
-            print("!"*20)
-            print(f"{serial} Some measurement windows received all samples:")
-            print(f"{np.sum(np.array([v for v in expected_sample.values()]))=}")
-            print(f"{np.sum(np.abs(np.array([v for v in missing_sample.values()])))=}")
-            print("!"*20)
+            for fn in [print, logging.critical]:
+                fn("!"*20)
+                fn(f"{serial} Some measurement windows received all samples:")
+                fn(f"{np.sum(np.array([v for v in expected_sample.values()]))=}")
+                fn(f"{np.sum(np.abs(np.array([v for v in missing_sample.values()])))=}")
+                fn(f"{np.sum(np.abs(np.array([np.floor(np.maximum(0, v)) for v in missing_sample.values()])))=}")
+                fn("!"*20)
 
 
         running_flag.clear()

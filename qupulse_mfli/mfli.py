@@ -402,6 +402,8 @@ def polling_averaging_thread(
                 fn(f"{np.sum(np.array([v for v in expected_sample.values()]))=}")
                 fn(f"{np.sum(np.abs(np.array([v for v in missing_sample.values()])))=}")
                 fn(f"{np.sum(np.abs(np.array([np.floor(np.maximum(0, v)) for v in missing_sample.values()])))=}")
+                fn(f"{np.sum(np.array([np.floor(v)>=1 for v in missing_sample.values()]))=}")
+                fn(f"{np.sum(np.array([np.floor(v)>1 for v in missing_sample.values()]))=}")
                 fn("!"*20)
 
 

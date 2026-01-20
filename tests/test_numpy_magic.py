@@ -1,4 +1,5 @@
 from qupulse_mfli.numpy_magic import average_within_window_assuming_linear_time_reduceat
+from qupulse_mfli.mfli import average_in_windows_numpy
 
 import numpy as np
 
@@ -66,3 +67,25 @@ def test_various_interesting_ones():
 	for d, t, b, l, e in get_interesting_testing_pairs():
 		averaged = average_within_window_assuming_linear_time_reduceat(d, t, b, l, True)
 		np.testing.assert_allclose(averaged, e.astype(float))
+
+
+def test_average_in_windows_numpy():
+    """ Testing if the average_in_windows_numpy behaves as expected
+    """
+
+    data = np.array([
+        [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2], 
+        [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3], 
+        [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]])
+
+    starts  = np.array([0, 0, 0, 2, 4, 8])
+    lengths = np.array([4, 3, 2, 4, 4, 4])
+
+    expected = np.array([
+        [0,     0,   0, 1/2, 1.0, 2.0], 
+        [1/4,   0,   0, 3/4, 1.5, (2+3+3+3)/4], 
+        [1/2, 1/3, 1/2, 1/2, 0.5, 0.5]])
+
+    selected, count, averaged, out_of_range, output = average_in_windows_numpy(data=data, start=starts, length=lengths)
+
+    assert np.allclose(output, expected)

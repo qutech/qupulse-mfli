@@ -18,7 +18,6 @@ class MockMFLI:
 		# variable to test the data playback functionality
 		self._loaded_readout_values : Dict[str, np.ndarray] = {} # will contain the data for each channel that is to be replayed
 		self._loaded_readout_time_axis : Union[np.ndarray, None] = None # the time axis of the pulse that is to be returned
-		self._loaded_prerun_duration : Union[float, int, None] = None # will contain the duration of noise, that is to be played before the actual trigger signal and data is returned
 		self._loaded_trigger : Literal[0, 1] = 0 # the trigger channel that is to be set to high when data is send
 		self._loaded_readout_chunk_size : int = 100 # the number of elements for one playback chunk
 		self._loaded_readout_chunk_size_jitter : Union[None, int] = 10 # the standard deviation of the returned chunk size
@@ -51,7 +50,7 @@ class MockMFLI:
 
 	def configure_acquisition(self, 
 		nodes:List[str], output_values:np.ndarray, time_axis:np.ndarray,
-		trigger:Literal[0, 1], prerun_duration:Union[float, int, None], chunk_size:int, chunk_size_jitter:int,
+		trigger:Literal[0, 1]=0, prerun_chunks:Union[float, int, None]=2, chunk_size:int=100, chunk_size_jitter:int=10,
 		):
 		""" This function will configure the Mock to playback some data
 
@@ -84,7 +83,7 @@ class MockMFLI:
 
 		# sampling the noise that is to be played back before the trigger event arises
 		dt = max(np.min(np.diff(time_axis)), 1)
-		noise_points = int(prerun_duration*self.getDouble(f"/{self.serial}/clockbase")*dt)
+		noise_points = prerun_chunks*chunk_size
 		noise_data = np.random.uniform(0, 1, size=(len(self._lowlevel_node_components), noise_points))
 		for n in ['trigger', 'dio']:
 			noise_data[self._lowlevel_node_components.index(n)] = 0
@@ -101,12 +100,11 @@ class MockMFLI:
 		
 		# combining the data before the trigger signal arrives with the requested data
 		shifted_time_axis = time_axis+noise_timeaxis[-1]+dt
-		complete_time_axis = np.concatenate([noise_timeaxis, shifted_time_axis, post_noise_timeaxis], axis=-1)
+		complete_time_axis = np.concatenate([noise_timeaxis, shifted_time_axis, post_noise_timeaxis+shifted_time_axis[-1]+dt], axis=-1)
 		combined_data = np.concatenate([noise_data, complete_data_field, post_noise_data], axis=-1)
 
 		self._loaded_readout_values = {n:d for n, d in zip(self._lowlevel_node_components, combined_data)}
 		self._loaded_readout_time_axis = complete_time_axis
-		self._loaded_prerun_duration = prerun_duration
 		self._loaded_trigger = trigger
 		self._loaded_readout_chunk_size = chunk_size
 		self._loaded_readout_chunk_size_jitter = chunk_size_jitter

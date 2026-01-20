@@ -231,8 +231,6 @@ def polling_averaging_thread(
     """
 
     # making sure the dimensions all add up
-    N_windows = len(windows)
-
     assert trigger in [None, 0, 1]
     assert all([c in ["r", "x", "y", "frequency", "phase", "dio", "trigger", "auxin0", "auxin1"] for cg in channel_mapping.values() for c in cg])
 
@@ -272,7 +270,8 @@ def polling_averaging_thread(
 
         while not stop_flag.is_set() and time.time()-start_time <= timeout:
             polled_data = api_session.poll(recording_time_s=recording_time_s, timeout_ms=timeout_ms, flags=0, flat=True)
-            # print(f"{polled_data=}")
+            print(f"{polled_data=}")
+            # if len(polled_data) == 0: break
             if base_node in polled_data:
                 rd = polled_data[base_node]
                 time_axis = rd["timestamp"]
@@ -391,7 +390,6 @@ def polling_averaging_thread(
 
         running_flag.clear()
         print(f"completed MFLI {serial} acquisition thread")
-
     return output_array
 
 @dataclasses.dataclass

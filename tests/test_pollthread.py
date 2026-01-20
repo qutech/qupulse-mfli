@@ -12,6 +12,9 @@ def test_all_ones():
 	""" this test if the MockMFLI class and the polling_averaging_thread can be used to obtain some data
 	"""
 
+	# seeding numpy
+	np.random.seed(435786)
+
 	# creating the mock class into which we will add the data to play back later.
 	mfli = MockMFLI("DEV12345")
 
@@ -46,6 +49,9 @@ def test_all_ones():
 def test_random_averaging():
 	""" this test if the MockMFLI class and the polling_averaging_thread can be used to obtain some data
 	"""
+
+	# seeding numpy
+	np.random.seed(435786)
 
 	# creating the mock class into which we will add the data to play back later.
 	mfli = MockMFLI("DEV12345")

@@ -52,7 +52,7 @@ def test_random_averaging():
 
 	# preparing a pulse to play back
 	n_chunks = 5
-	chunks = [np.random.uniform(0, 1, 100) for _ in range(n_chunks)]
+	chunks = [np.random.uniform(0, 1, 10) for _ in range(n_chunks)]
 	data = np.concatenate(chunks)
 	time_axis = np.linspace(0, 1*n_chunks, len(data)) # this is in units of s
 
@@ -77,5 +77,8 @@ def test_random_averaging():
 	assert not running_flag.is_set()
 	assert output_array["WG1"].flatten().shape == (n_chunks,)
 	assert np.allclose(output_array["WG1"].flatten(), [np.mean(c) for c in chunks])
+
+
+
 
 

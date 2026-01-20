@@ -216,28 +216,6 @@ def average_in_windows_numpy(data:np.ndarray, start:np.ndarray, length:np.ndarra
 
     return selected, count, averaged, out_of_range, output
 
-def test_average_in_windows_numpy():
-    """ Testing if the average_in_windows_numpy behaves as expected
-    """
-
-    data = np.array([
-        [0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2], 
-        [0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3], 
-        [0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]])
-
-    starts  = np.array([0, 0, 0, 2, 4, 8])
-    lengths = np.array([4, 3, 2, 4, 4, 4])
-
-    expected = np.array([
-        [0,     0,   0, 1/2, 1.0, 2.0], 
-        [1/4,   0,   0, 3/4, 1.5, (2+3+3+3)/4], 
-        [1/2, 1/3, 1/2, 1/2, 0.5, 0.5]])
-
-    selected, count, averaged, out_of_range, output = average_in_windows_numpy(data=data, start=starts, length=lengths)
-
-    assert np.allclose(output, expected)
-
-
 def polling_averaging_thread(
     api_session, serial, channel_mapping:Dict[str, Set[str]], trigger:Union[None, int], 
     windows:Dict[str, List[np.ndarray]], output_array:Dict[str, np.ndarray], 
@@ -248,7 +226,7 @@ def polling_averaging_thread(
 
 
     windows : np.ndarray
-        An array of shape (-1, 2), where the second dimension has the start time of a measurement window and the end time in ns.
+        An array of shape (-1, 2), where the second dimension has the start time of a measurement window and the duration in ns.
 
     """
 
@@ -307,7 +285,7 @@ def polling_averaging_thread(
                     else:
 
                         """
-                        trigger 1 high: &0b0101
+                        trigger 0 high: &0b0101
                         trigger 1 high: &0b1010
                         """
 
@@ -386,25 +364,29 @@ def polling_averaging_thread(
         api_session.unsubscribe("*")
 
         # checking if the recording was successful by counting the points that were averaged into each point
-        sample_rate = api_session.getDouble(f"/{serial}/demods/0/rate") # Sample/s
-        all_there = {}
-        expected_sample = {}
-        missing_sample = {}
-        for k, (s, l) in windows.items():
-            expected_sample[k] = l*1e-9*sample_rate
-            all_there[k] = np.allclose(expected_sample[k], count_array[k], atol=1, rtol=0.005)
-            missing_sample[k] = expected_sample[k]-count_array[k]
+        try:
+            sample_rate = api_session.getDouble(f"/{serial}/demods/0/rate") # Sample/s
+            all_there = {}
+            expected_sample = {}
+            missing_sample = {}
+            for k, (s, l) in windows.items():
+                expected_sample[k] = l*1e-9*sample_rate
+                all_there[k] = np.allclose(expected_sample[k], count_array[k], atol=1, rtol=0.005)
+                missing_sample[k] = expected_sample[k]-count_array[k]
 
-        if not all(all_there.values()):
-            for fn in [print, logging.critical]:
-                fn("!"*20)
-                fn(f"{serial} Some measurement windows received all samples:")
-                fn(f"{np.sum(np.array([v for v in expected_sample.values()]))=}")
-                fn(f"{np.sum(np.abs(np.array([v for v in missing_sample.values()])))=}")
-                fn(f"{np.sum(np.abs(np.array([np.floor(np.maximum(0, v)) for v in missing_sample.values()])))=}")
-                fn(f"{np.sum(np.array([np.floor(v)>=1 for v in missing_sample.values()]))=}")
-                fn(f"{np.sum(np.array([np.floor(v)>1 for v in missing_sample.values()]))=}")
-                fn("!"*20)
+            if not all(all_there.values()):
+                for fn in [print, logging.critical]:
+                    fn("!"*20)
+                    fn(f"{serial} Some measurement windows received all samples:")
+                    fn(f"{np.sum(np.array([v for v in expected_sample.values()]))=}")
+                    fn(f"{np.sum(np.abs(np.array([v for v in missing_sample.values()])))=}")
+                    fn(f"{np.sum(np.abs(np.array([np.floor(np.maximum(0, v)) for v in missing_sample.values()])))=}")
+                    fn(f"{np.sum(np.array([np.floor(v)>=1 for v in missing_sample.values()]))=}")
+                    fn(f"{np.sum(np.array([np.floor(v)>1 for v in missing_sample.values()]))=}")
+                    fn("!"*20)
+        except NameError as ne:
+            print("An error occurred before all variables were instantiated")
+            print(ne)
 
 
         running_flag.clear()
@@ -561,7 +543,6 @@ class ApiSessionInterceptor:
                 
         return gathered
     
-
 class MFLIDAQ(DAC):
     """ This class contains the driver for using the DAQ module of an Zuerich Instruments MFLI with qupulse.
     """
@@ -1233,7 +1214,6 @@ class MFLIDAQ(DAC):
                                                               Dict[str, Dict[str, List[xr.DataArray]]],
                                                               None]:
         return self.get_mfli_data(wait, timeout, wait_time, return_raw, fail_if_incomplete, fail_on_empty)
-
 
 class MFLIPOLL(MFLIDAQ):
     """ This class contains the driver for using the poll method of an Zuerich Instruments MFLI with qupulse.

@@ -57,7 +57,7 @@ def test_random_averaging():
 	mfli = MockMFLI("DEV12345")
 
 	# preparing a pulse to play back
-	n_chunks = 5
+	n_chunks = 500
 	chunks = [np.random.uniform(0, 1, 10) for _ in range(n_chunks)]
 	data = np.concatenate(chunks)
 	time_axis = np.linspace(0, 1*n_chunks, len(data)) # this is in units of s
@@ -72,7 +72,7 @@ def test_random_averaging():
 	output_array = polling_averaging_thread(
 		api_session=mfli, serial=mfli.serial, 
 		channel_mapping={"WG1": set("x")}, trigger=0,
-		windows={"WG1": np.array([[i, 1+0.001] for i in range(n_chunks)]).T*1e9}, # the measurement windows in units of ns
+		windows={"WG1": np.array([[i, 1+0.000001] for i in range(n_chunks)]).T*1e9}, # the measurement windows in units of ns
 		output_array={"WG1": np.ones((1, n_chunks))*np.nan}, 
 		running_flag=running_flag, stop_flag=stop_flag, 
 		timeout=np.inf, # timeout after which the acquisitions stops, even if not all samples were measured. This values is given in units of s

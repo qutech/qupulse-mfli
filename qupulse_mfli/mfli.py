@@ -130,14 +130,18 @@ def postprocessing_crop_windows(
                 assert len(timeaxis.shape) == 1
                 dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)
 
-                if average_window and np.allclose(np.diff(timeaxis, axis=-1), dt, atol=2):
+                if average_window and np.allclose(np.diff(timeaxis, axis=-1), dt, atol=4):
                     calc_begins = begins + time_of_trigger[r]
                     ends = calc_begins + lengths
                     averaged = average_windows(timeaxis, values=applicable_row.values,
                                                begins=calc_begins, ends=ends)
                     extracted_data = averaged
                 else:
-                    print("Falling back to a very slow window extraction method.")
+                    diff = np.diff(timeaxis, axis=-1)
+                    print(f"Falling back to a very slow window extraction method. max diff: {np.max(diff)}")
+                    print(diff)
+                    max_diff_arg = np.argmax(diff)
+                    print(diff[max_diff_arg-4:max_diff_arg+4])
 
                     for b, l in zip(begins, lengths):
         

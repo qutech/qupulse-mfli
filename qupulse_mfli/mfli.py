@@ -63,7 +63,8 @@ def postprocessing_crop_windows(
                 program: "MFLIProgram",
                 fail_on_empty: bool = True, 
                 average_window:bool=False, 
-                sort_along_time:bool=True
+                sort_along_time:bool=True,
+                time_accuracy_atol: float = 2,
                 ) -> Mapping[str, Mapping[str, List[Union[float, xr.DataArray]]]]:
     """ This function parses the recorded data and extracts the measurement masks
     """
@@ -132,7 +133,7 @@ def postprocessing_crop_windows(
                 assert len(timeaxis.shape) == 1
                 dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)
 
-                if average_window and np.allclose(np.diff(timeaxis, axis=-1), dt, atol=2):
+                if average_window and np.allclose(np.diff(timeaxis, axis=-1), dt, atol=time_accuracy_atol):
                     calc_begins = begins + time_of_trigger[r]
                     ends = calc_begins + lengths
                     averaged = average_windows(timeaxis, values=applicable_row.values,
@@ -165,7 +166,8 @@ def postprocessing_average_within_windows(
                 serial:str,
                 recorded_data: Mapping[str, List[xr.DataArray]],
                 program: "MFLIProgram",
-                fail_on_empty: bool = True) -> Mapping[str, Mapping[str, List[float]]]:
+                fail_on_empty: bool = True,
+                time_accuracy_atol: float = 2) -> Mapping[str, Mapping[str, List[float]]]:
     """ This function returns one float per window that averages each channel individually for that window.
     """
 
@@ -174,7 +176,8 @@ def postprocessing_average_within_windows(
                 recorded_data = recorded_data,
                 program = program,
                 fail_on_empty = fail_on_empty, 
-                average_window = True)
+                average_window = True,
+                time_accuracy_atol = time_accuracy_atol)
 
 def average_in_windows_numpy(data:np.ndarray, start:np.ndarray, length:np.ndarray) -> np.ndarray:
     """ 
@@ -219,7 +222,10 @@ def average_in_windows_numpy(data:np.ndarray, start:np.ndarray, length:np.ndarra
 def polling_averaging_thread(
     api_session, serial, channel_mapping:Dict[str, Set[str]], trigger:Union[None, int], 
     windows:Dict[str, List[np.ndarray]], output_array:Dict[str, np.ndarray], 
-    running_flag:threading.Event, stop_flag:threading.Event, timeout:float):
+    running_flag:threading.Event, stop_flag:threading.Event, timeout:float,
+    poll_interval_s: float = 0.02,
+    timeout_poll_ms: float = 1000, #!!! what is this timeout compared to other one?
+    ):
     """ This thread polls data and averages it into the specified windows
 
     to measure the demodulated signal, the node "/dev3869/demods/0/sample" might be subscribed to.
@@ -245,9 +251,9 @@ def polling_averaging_thread(
         clock_base = api_session.getDouble(f'/{serial}/clockbase')
 
         # getting some data to clear the buffer
-        recording_time_s = 0.020 # the size of one chunk in s that is to be recorded after the function is called. Not polled data should also be returned. 
+        recording_time_s = poll_interval_s # the size of one chunk in s that is to be recorded after the function is called. Not polled data should also be returned. 
         # things become unstable for recording times below 1ms and over long durations 1ms is not quite stable!
-        timeout_ms = 1000
+        timeout_ms = timeout_poll_ms
         _ = api_session.poll(recording_time_s=recording_time_s, timeout_ms=timeout_ms, flags=0, flat=True)
 
         # announcing that the loop is now measuring
@@ -1223,7 +1229,10 @@ class MFLIPOLL(MFLIDAQ):
                  name: str = 'Lockin',
                  reset: bool = False,
                  timeout: float = 20,
-                 save_recent_state:bool = True) -> None:
+                 save_recent_state:bool = True,
+                 poll_interval_s: float = 0.02,
+                 timeout_poll_ms: float = 1000, #!!! what is this timeout compared to other one?
+                 ) -> None:
         """
         :param reset:             Reset device before initialization
         :param timeout:           Timeout in seconds for uploading
@@ -1262,6 +1271,9 @@ class MFLIPOLL(MFLIDAQ):
         self.running_flag = threading.Event()
         self.stop_flag = threading.Event()
         self.current_output_array = None
+        
+        self.timeout_poll_ms = timeout_poll_ms
+        self.poll_interval_s = poll_interval_s
 
     def reset(self):
         """ This function resets the device to a known default configuration.
@@ -1354,8 +1366,20 @@ class MFLIPOLL(MFLIDAQ):
             }
         self.current_output_array = output_array
         
+        aqc_kwargs =dict(
+            api_session=api_session,
+            serial=serial,
+            channel_mapping=self._translate_channel_mapping(program.channel_mapping),
+            trigger=trigger, windows=program.windows,
+            output_array=output_array,
+            running_flag=self.running_flag,
+            stop_flag=self.stop_flag,
+            timeout=timeout,
+            timeout_poll_ms=self.timeout_poll_ms,
+            poll_interval_s=self.poll_interval_s,
+            )
         print(f"arming MFLI {self.serial} acquisition thread")
-        self.thread = threading.Thread(target=polling_averaging_thread, kwargs=dict(api_session=api_session, serial=serial, channel_mapping=self._translate_channel_mapping(program.channel_mapping), trigger=trigger, windows=program.windows, output_array=output_array, running_flag=self.running_flag, stop_flag=self.stop_flag, timeout=timeout), name=f"{self.serial} polling thread")
+        self.thread = threading.Thread(target=polling_averaging_thread,kwargs=aqc_kwargs,name=f"{self.serial} polling thread")
 
         # starting the acquisition thread
         print(f"starting MFLI {self.serial} acquisition thread")

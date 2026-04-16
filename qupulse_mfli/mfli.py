@@ -63,7 +63,8 @@ def postprocessing_crop_windows(
                 program: "MFLIProgram",
                 fail_on_empty: bool = True, 
                 average_window:bool=False, 
-                sort_along_time:bool=True
+                sort_along_time:bool=True,
+                time_accuracy_atol: float = 2,
                 ) -> Mapping[str, Mapping[str, List[Union[float, xr.DataArray]]]]:
     """ This function parses the recorded data and extracts the measurement masks
     """
@@ -132,7 +133,7 @@ def postprocessing_crop_windows(
                 assert len(timeaxis.shape) == 1
                 dt = (timeaxis[-1]-timeaxis[0])/(len(timeaxis)-1)
 
-                if average_window and np.allclose(np.diff(timeaxis, axis=-1), dt, atol=2):
+                if average_window and np.allclose(np.diff(timeaxis, axis=-1), dt, atol=time_accuracy_atol):
                     calc_begins = begins + time_of_trigger[r]
                     ends = calc_begins + lengths
                     averaged = average_windows(timeaxis, values=applicable_row.values,
@@ -165,7 +166,8 @@ def postprocessing_average_within_windows(
                 serial:str,
                 recorded_data: Mapping[str, List[xr.DataArray]],
                 program: "MFLIProgram",
-                fail_on_empty: bool = True) -> Mapping[str, Mapping[str, List[float]]]:
+                fail_on_empty: bool = True,
+                time_accuracy_atol: float = 2) -> Mapping[str, Mapping[str, List[float]]]:
     """ This function returns one float per window that averages each channel individually for that window.
     """
 
@@ -174,7 +176,8 @@ def postprocessing_average_within_windows(
                 recorded_data = recorded_data,
                 program = program,
                 fail_on_empty = fail_on_empty, 
-                average_window = True)
+                average_window = True,
+                time_accuracy_atol = time_accuracy_atol)
 
 def average_in_windows_numpy(data:np.ndarray, start:np.ndarray, length:np.ndarray) -> np.ndarray:
     """ 

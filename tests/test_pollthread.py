@@ -5,7 +5,7 @@ import numpy as np
 import threading
 
 from qupulse_mfli.mfli import polling_averaging_thread, MFLIPOLL
-from mock_api import MockMFLI
+from qupulse_mfli.mock_api import MockMFLI
 
 
 def test_all_ones():

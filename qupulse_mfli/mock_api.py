@@ -23,7 +23,7 @@ class MockMFLI:
 		self._loaded_readout_chunk_size_jitter : Union[None, int] = 10 # the standard deviation of the returned chunk size
 		self._playback_state : Literal['armed', 'running', 'completed', 'not_configured'] = 'not_configured'
 		self._playback_position : int = 0 # the index in the pulse which might be returned with the next request.
-		self._last_oll_time : Union[None, float] = None # the last point in time at which a poll event was performed
+		self._last_poll_time : Union[None, float] = None # the last point in time at which a poll event was performed
 		self._playback_artificial_wait : float = 100e-3 # the time that that the poll function should wait before returning the next chunk of data.
 		self._lowlevel_node_components = ["x", "y", "frequency", "phase", "dio", "trigger", "auxin0", "auxin1"] # the names of the nodes that the MFLI returns. This variable is not to be changed.
 
@@ -110,14 +110,15 @@ class MockMFLI:
 		self._loaded_readout_chunk_size_jitter = chunk_size_jitter
 		self._playback_state = 'armed'
 		self._playback_position = 0
+		self._last_poll_time = None
 
 	def poll(self, recording_time_s:float, timeout_ms:float, flags:int, flat:bool):
 
 		# checks if the last call to this function did not occur more than 8 seconds ago.
 		time_of_call = time.time()
-		if self._last_oll_time is not None:
-			assert time_of_call-self._last_oll_time < 8, "The last poll commands were at least 8 seconds apart. This is too long. After 8 seconds, data will be dumped by the zhinst software."
-		self._last_oll_time = time_of_call
+		if self._last_poll_time is not None:
+			assert time_of_call-self._last_poll_time < 8, "The last poll commands were at least 8 seconds apart. This is too long. After 8 seconds, data will be dumped by the zhinst software."
+		self._last_poll_time = time_of_call
 
 		# checks if the input parameters are in reasonable ranges.
 		assert recording_time_s >= 20e-3, "recording times below 20ms have shown to result in unstable behavior"
@@ -151,7 +152,7 @@ class MockMFLI:
 			self._playback_state = 'completed'
 
 		if self._playback_state == 'completed':
-			self._last_oll_time = None
+			self._last_poll_time = None
 
 		if self._playback_artificial_wait is not None:
 			time.sleep(self._playback_artificial_wait)

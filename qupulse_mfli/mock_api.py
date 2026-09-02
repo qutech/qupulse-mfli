@@ -26,6 +26,7 @@ class MockMFLI:
 		self._last_poll_time : Union[None, float] = None # the last point in time at which a poll event was performed
 		self._playback_artificial_wait : float = 100e-3 # the time that that the poll function should wait before returning the next chunk of data.
 		self._lowlevel_node_components = ["x", "y", "frequency", "phase", "dio", "trigger", "auxin0", "auxin1"] # the names of the nodes that the MFLI returns. This variable is not to be changed.
+		self.error_on_empty_poll = True
 
 	@property
 	def serial(self):
@@ -50,7 +51,7 @@ class MockMFLI:
 
 	def configure_acquisition(self, 
 		nodes:List[str], output_values:np.ndarray, time_axis:np.ndarray,
-		trigger:Literal[0, 1]=0, prerun_chunks:Union[float, int, None]=2, chunk_size:int=100, chunk_size_jitter:int=10,
+		trigger:Literal[0, 1, None, "both"]=0, prerun_chunks:Union[float, int, None]=2, chunk_size:int=100, chunk_size_jitter:int=10,
 		):
 		""" This function will configure the Mock to playback some data
 
@@ -77,9 +78,12 @@ class MockMFLI:
 				complete_data_field[i] = output_values[nodes.index(n)]
 
 		# setting the chosen trigger input to high for the data that is to be played back
-		assert trigger in [0, 1, None]
+		assert trigger in [0, 1, None, "both"]
 		if trigger is not None:
-			complete_data_field[self._lowlevel_node_components.index("trigger")] = (0b0101<<trigger)
+			if trigger == "both":
+				complete_data_field[self._lowlevel_node_components.index("trigger")] = (0b1111)
+			else:
+				complete_data_field[self._lowlevel_node_components.index("trigger")] = (0b0101<<trigger)
 
 		# sampling the noise that is to be played back before the trigger event arises
 		dt = max(np.min(np.diff(time_axis)), 1)
@@ -128,7 +132,10 @@ class MockMFLI:
 
 		# checking if we have data to replay
 		if self._playback_state == 'completed':
-			return {}
+			if self.error_on_empty_poll:
+				raise ValueError("No new data to be polled.")
+			else:
+				return {}
 
 		# selecting the next slice to play back
 		next_chunk_size = max(1, int(self._loaded_readout_chunk_size + np.random.normal(0, self._loaded_readout_chunk_size_jitter)))
